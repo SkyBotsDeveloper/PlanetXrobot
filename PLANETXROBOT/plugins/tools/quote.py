@@ -1,4 +1,3 @@
-import base64
 import re
 import textwrap
 import unicodedata
@@ -6,30 +5,9 @@ from io import BytesIO
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from PLANETXROBOT import app
-from httpx import AsyncClient, Timeout
 from PIL import Image, ImageDraw, ImageFont
 from unidecode import unidecode
 
-# -----------------------------------------------------------------
-fetch = AsyncClient(
-    http2=True,
-    verify=False,
-    headers={
-        "Accept-Language": "id-ID",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-                       AppleWebKit/537.36 (KHTML, like Gecko) \
-                       Chrome/107.0.0.0 Safari/537.36 Edge/107.0.1418.42",
-    },
-    timeout=Timeout(20),
-)
-QUOTE_JSON_ENDPOINTS = (
-    "https://quote.yuri.ly/generate",
-    "https://bot.lyo.su/quote/generate",
-)
-QUOTE_BINARY_ENDPOINTS = (
-    "https://quote.yuri.ly/generate.webp",
-    "https://bot.lyo.su/quote/generate.png",
-)
 QUOTE_NAME_LIMIT = 48
 DECORATIVE_NAME_RE = re.compile(
     "["
@@ -430,109 +408,11 @@ async def get_text_or_caption(ctx: Message):
 async def pyrogram_to_quotly(messages, is_reply):
     if not isinstance(messages, list):
         messages = [messages]
-    payload = {
-        "type": "quote",
-        "format": "webp",
-        "backgroundColor": "#1b1429",
-        "width": 512,
-        "scale": 2,
-        "emojiBrand": "apple",
-        "messages": [],
-    }
-# ------------------------------------------------------------------------------------------------------------
-    for message in messages:
-        the_message_dict_to_append = {}
-        if message.entities:
-            the_message_dict_to_append["entities"] = [
-                {
-                    "type": entity.type.name.lower(),
-                    "offset": entity.offset,
-                    "length": entity.length,
-                }
-                for entity in message.entities
-            ]
-        elif message.caption_entities:
-            the_message_dict_to_append["entities"] = [
-                {
-                    "type": entity.type.name.lower(),
-                    "offset": entity.offset,
-                    "length": entity.length,
-                }
-                for entity in message.caption_entities
-            ]
-        else:
-            the_message_dict_to_append["entities"] = []
-        the_message_dict_to_append["chatId"] = await get_message_sender_id(message)
-        the_message_dict_to_append["text"] = await get_text_or_caption(message)
-        the_message_dict_to_append["avatar"] = True
-        the_message_dict_to_append["from"] = {}
-        the_message_dict_to_append["from"]["id"] = await get_message_sender_id(message)
-        the_message_dict_to_append["from"]["name"] = _quote_display_name(
-            await get_message_sender_name(message)
-        )
-        the_message_dict_to_append["from"][
-            "username"
-        ] = await get_message_sender_username(message)
-        the_message_dict_to_append["from"]["type"] = message.chat.type.name.lower()
-        the_message_dict_to_append["from"]["photo"] = await get_message_sender_photo(
-            message
-        )
-        if message.reply_to_message and is_reply:
-            the_message_dict_to_append["replyMessage"] = {
-                "name": _quote_display_name(
-                    await get_message_sender_name(message.reply_to_message), "Reply"
-                ),
-                "text": await get_text_or_caption(message.reply_to_message),
-                "chatId": await get_message_sender_id(message.reply_to_message),
-            }
-        else:
-            the_message_dict_to_append["replyMessage"] = {}
-        payload["messages"].append(the_message_dict_to_append)
-    errors = []
-
-    for endpoint in QUOTE_BINARY_ENDPOINTS:
-        try:
-            r = await fetch.post(endpoint, json=payload)
-            content_type = (r.headers.get("content-type") or "").lower()
-            body = r.content
-            if not r.is_error and (
-                content_type.startswith("image/")
-                or body.startswith((b"RIFF", b"\x89PNG", b"\xff\xd8"))
-            ):
-                return body
-            try:
-                errors.append(f"{endpoint}: {r.json()}")
-            except Exception:
-                errors.append(f"{endpoint}: HTTP {r.status_code}")
-        except Exception as exc:
-            errors.append(f"{endpoint}: {exc}")
-
-    for endpoint in QUOTE_JSON_ENDPOINTS:
-        try:
-            r = await fetch.post(endpoint, json=payload)
-            if not r.is_error:
-                data = r.json()
-                image_data = (
-                    ((data.get("result") or {}).get("image") or data.get("image") or "")
-                    .strip()
-                )
-                if image_data:
-                    return base64.b64decode(image_data)
-                errors.append(f"{endpoint}: returned no image")
-            else:
-                try:
-                    errors.append(f"{endpoint}: {r.json()}")
-                except Exception:
-                    errors.append(f"{endpoint}: HTTP {r.status_code}")
-        except Exception as exc:
-            errors.append(f"{endpoint}: {exc}")
 
     try:
         return await _render_quote_locally(messages, is_reply)
     except Exception as exc:
-        errors.append(f"local renderer failed: {exc}")
-
-    raise QuotlyException("; ".join(errors[-3:]))
+        raise QuotlyException(f"local renderer failed: {exc}") from exc
 # ------------------------------------------------------------------------------------------
 
 # Helper function to check if an argument is an integer

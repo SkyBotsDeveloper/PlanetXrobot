@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
+from yt_dlp import YoutubeDL
 
 from PLANETXROBOT.security import validate_public_http_url
 
@@ -32,12 +34,8 @@ HTTP_HEADERS = {
 MAX_MEDIA_FILES = 8
 MAX_DOWNLOAD_BYTES = 95 * 1024 * 1024
 FAILURE_COOLDOWN_SECONDS = 420
-TRACKER_CACHE_TTL_SECONDS = 900
-PYBALT_API_URL = "https://dwnld.nichind.dev/"
-LEGACY_COBALT_API_URL = "https://downloadapi.stuff.solutions/api/json"
 FIXTWEET_API_URL = "https://api.fxtwitter.com"
 VXTWITTER_API_URL = "https://api.vxtwitter.com"
-COBALT_INSTANCE_TRACKER_URL = "https://instances.cobalt.best/instances.json"
 TIKWM_API_URL = "https://www.tikwm.com/api/"
 X_OEMBED_URL = "https://publish.twitter.com/oembed"
 YOUTUBE_OEMBED_URL = "https://www.youtube.com/oembed"
@@ -93,9 +91,6 @@ PLATFORM_HOSTS = {
     "snapchat": SNAPCHAT_HOSTS,
     "tiktok": TIKTOK_HOSTS,
 }
-PLATFORM_SERVICE_KEYS = {
-    "x": "twitter",
-}
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".webm", ".m4v"}
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -120,8 +115,6 @@ HTML_MEDIA_META_KEYS = (
     ("twitter:image:src", "photo"),
     ("twitter:image", "photo"),
 )
-_TRACKER_CACHE: list[dict] = []
-_TRACKER_CACHE_AT = 0.0
 _STRATEGY_COOLDOWNS: dict[str, float] = {}
 
 
@@ -152,15 +145,6 @@ class PageMetadata:
     site_name: str
     items: list[SocialMediaItem]
     note_text: str
-
-
-def _service_works(value) -> bool:
-    if value is True:
-        return True
-    text = str(value or "").strip().lower()
-    if not text:
-        return False
-    return "error" not in text and "couldn't" not in text and "could not" not in text
 
 
 def _prune_cooldowns():
@@ -274,95 +258,6 @@ async def _request_json(
     response = await client.request(method, url, **kwargs)
     response.raise_for_status()
     return response.json()
-
-
-def _bundle_from_cobalt_payload(payload, source_name: str) -> SocialDownloadBundle | None:
-    if not isinstance(payload, dict):
-        return None
-
-    status = str(payload.get("status") or "").lower()
-    if status == "error":
-        error = payload.get("error") or {}
-        message = error.get("code") or payload.get("text") or "Downloader API failed."
-        raise SocialDownloadError(str(message))
-
-    title = _safe_filename(
-        payload.get("filename")
-        or (payload.get("output") or {}).get("filename")
-        or f"{source_name} Media",
-        f"{source_name} Media",
-    )
-
-    if status in {"tunnel", "redirect"}:
-        media_url = payload.get("url")
-        if media_url:
-            filename = payload.get("filename") or title
-            content_type = payload.get("type") or ""
-            return SocialDownloadBundle(
-                title=title,
-                source=source_name,
-                items=[
-                    SocialMediaItem(
-                        url=str(media_url),
-                        kind=_guess_kind(str(filename), str(content_type)),
-                        filename_hint=str(filename),
-                    )
-                ],
-            )
-
-    if status == "picker":
-        picker = payload.get("picker") or []
-        items: list[SocialMediaItem] = []
-        for item in picker[:MAX_MEDIA_FILES]:
-            media_url = item.get("url")
-            media_type = str(item.get("type") or "document").lower()
-            if media_url:
-                if media_type == "audio":
-                    kind = "audio"
-                elif media_type in {"video", "gif"}:
-                    kind = "video"
-                elif media_type in {"photo", "image"}:
-                    kind = "photo"
-                else:
-                    kind = "document"
-                items.append(
-                    SocialMediaItem(
-                        url=str(media_url),
-                        kind=kind,
-                        filename_hint=title,
-                    )
-                )
-        audio_url = payload.get("audio")
-        if audio_url and len(items) < MAX_MEDIA_FILES:
-            items.append(
-                SocialMediaItem(
-                    url=str(audio_url),
-                    kind="audio",
-                    filename_hint=str(payload.get("audioFilename") or title),
-                )
-            )
-        if items:
-            return SocialDownloadBundle(title=title, source=source_name, items=items)
-
-    if status == "local-processing":
-        tunnels = payload.get("tunnel") or []
-        output = payload.get("output") or {}
-        output_name = output.get("filename") or title
-        output_type = output.get("type") or ""
-        if tunnels:
-            return SocialDownloadBundle(
-                title=_safe_filename(output_name, title),
-                source=source_name,
-                items=[
-                    SocialMediaItem(
-                        url=str(tunnels[0]),
-                        kind=_guess_kind(str(output_name), str(output_type)),
-                        filename_hint=str(output_name),
-                    )
-                ],
-            )
-
-    return None
 
 
 def _extract_html_metadata(html: str) -> tuple[str, str, str, dict[str, list[str]]]:
@@ -537,124 +432,98 @@ async def _build_youtube_oembed_note(client: httpx.AsyncClient, source_url: str)
     return "\n".join(lines).strip()
 
 
-async def _fetch_via_cobalt_api(
-    client: httpx.AsyncClient,
-    source_url: str,
-    *,
-    endpoint: str,
-    source_name: str,
-) -> SocialDownloadBundle:
-    payload = {
-        "url": source_url,
-        "filenameStyle": "pretty",
-        "downloadMode": "auto",
-        "videoQuality": "1080",
-        "youtubeVideoCodec": "h264",
-        "youtubeVideoContainer": "mp4",
-        "audioFormat": "mp3",
-        "youtubeBetterAudio": True,
-        "alwaysProxy": True,
-        "localProcessing": "disabled",
-    }
-    data = await _request_json(
-        client,
-        "POST",
-        endpoint,
-        timeout=API_TIMEOUT,
-        headers={
-            **HTTP_HEADERS,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-    )
-    bundle = _bundle_from_cobalt_payload(data, source_name)
-    if bundle:
-        return bundle
-    raise SocialDownloadError(f"{source_name} returned no downloadable media.")
+def _pick_ytdlp_entry(info) -> dict:
+    if not isinstance(info, dict):
+        raise SocialDownloadError("yt-dlp returned an unexpected response.")
+    entries = info.get("entries")
+    if isinstance(entries, list) and entries:
+        for entry in entries:
+            if isinstance(entry, dict):
+                return entry
+    return info
 
 
-async def _get_tracker_instances(client: httpx.AsyncClient) -> list[dict]:
-    global _TRACKER_CACHE, _TRACKER_CACHE_AT
-    now = time.monotonic()
-    if _TRACKER_CACHE and now - _TRACKER_CACHE_AT < TRACKER_CACHE_TTL_SECONDS:
-        return _TRACKER_CACHE
+def _pick_ytdlp_format(entry: dict) -> dict:
+    direct_url = str(entry.get("url") or "").strip()
+    protocol = str(entry.get("protocol") or "").lower()
+    if direct_url.startswith(("http://", "https://")) and "m3u8" not in protocol:
+        return entry
 
-    tracker = await _request_json(
-        client,
-        "GET",
-        COBALT_INSTANCE_TRACKER_URL,
-        timeout=API_TIMEOUT,
-        headers=HTTP_HEADERS,
-    )
-    if not isinstance(tracker, list):
-        raise SocialDownloadError("Cobalt tracker returned an unexpected response.")
-
-    tracker.sort(key=lambda item: int((item or {}).get("score") or 0), reverse=True)
-    _TRACKER_CACHE = tracker
-    _TRACKER_CACHE_AT = now
-    return tracker
-
-
-async def _fetch_via_tracker_instances(
-    client: httpx.AsyncClient,
-    source_url: str,
-    *,
-    platform: str,
-    excluded_endpoints: set[str] | None = None,
-) -> SocialDownloadBundle:
-    excluded = {item.rstrip("/") for item in (excluded_endpoints or set())}
-    tracker = await _get_tracker_instances(client)
-    failures: list[str] = []
-    tried = 0
-
-    for item in tracker:
+    formats = entry.get("formats") or []
+    for item in reversed(formats):
         if not isinstance(item, dict):
             continue
-        if not item.get("online"):
+        media_url = str(item.get("url") or "").strip()
+        protocol = str(item.get("protocol") or "").lower()
+        ext = str(item.get("ext") or "").lower()
+        size = int(item.get("filesize") or item.get("filesize_approx") or 0)
+        if not media_url.startswith(("http://", "https://")):
             continue
-        info = item.get("info") or {}
-        if info.get("auth"):
+        if "m3u8" in protocol:
             continue
-
-        services = item.get("services") or {}
-        service_key = PLATFORM_SERVICE_KEYS.get(platform, platform)
-        if not _service_works(services.get(service_key)):
+        if size and size > MAX_DOWNLOAD_BYTES:
             continue
+        if ext in {"mp4", "webm", "m4a", "mp3", "jpg", "jpeg", "png", "webp"}:
+            return item
 
-        proto = str(item.get("protocol") or "https").strip()
-        api_host = str(item.get("api") or "").strip().strip("/")
-        if not api_host:
-            continue
+    raise SocialDownloadError("yt-dlp returned no direct downloadable media URL.")
 
-        endpoint_candidates = [
-            f"{proto}://{api_host}",
-            f"{proto}://{api_host}/api/json",
-        ]
-        for endpoint in endpoint_candidates:
-            normalized = endpoint.rstrip("/")
-            if normalized in excluded:
-                continue
-            if _on_cooldown(f"tracker:{normalized}"):
-                continue
-            tried += 1
-            try:
-                return await _fetch_via_cobalt_api(
-                    client,
-                    source_url,
-                    endpoint=endpoint,
-                    source_name=f"Public Instance {api_host}",
-                )
-            except Exception as exc:
-                _mark_cooldown(f"tracker:{normalized}")
-                failures.append(f"{api_host}: {exc}")
-            if tried >= 4:
-                break
-        if tried >= 4:
-            break
 
-    details = "\n".join(failures[:3])
-    raise SocialDownloadError(details or "No public no-auth cobalt instance responded.")
+def _extract_ytdlp_bundle(source_url: str, platform: str) -> SocialDownloadBundle:
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "socket_timeout": 18,
+        "format": "best[filesize<90M]/best[filesize_approx<90M]/best",
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(source_url, download=False)
+
+    entry = _pick_ytdlp_entry(info)
+    selected = _pick_ytdlp_format(entry)
+    media_url = str(selected.get("url") or "").strip()
+    title = _safe_filename(
+        entry.get("title") or selected.get("format_id") or f"{platform.title()} Media",
+        f"{platform.title()} Media",
+    )
+    ext = str(selected.get("ext") or entry.get("ext") or "").strip().lower()
+    filename = _safe_filename(
+        entry.get("filename")
+        or entry.get("_filename")
+        or f"{title}.{ext or 'mp4'}",
+        f"{title}.{ext or 'mp4'}",
+    )
+    if ext and not Path(filename).suffix:
+        filename = f"{filename}.{ext}"
+
+    kind = _guess_kind(filename, "")
+    if kind == "document":
+        vcodec = str(selected.get("vcodec") or entry.get("vcodec") or "")
+        acodec = str(selected.get("acodec") or entry.get("acodec") or "")
+        if vcodec and vcodec != "none":
+            kind = "video"
+        elif acodec and acodec != "none":
+            kind = "audio"
+
+    note_parts = []
+    uploader = _clean_text(entry.get("uploader") or entry.get("channel"))
+    if title:
+        note_parts.append(f"Title: {title}")
+    if uploader:
+        note_parts.append(f"Author: {uploader}")
+
+    return SocialDownloadBundle(
+        title=title,
+        source="yt-dlp",
+        items=[SocialMediaItem(url=media_url, kind=kind, filename_hint=filename)],
+        note_text="\n".join(note_parts),
+    )
+
+
+async def _fetch_via_ytdlp(source_url: str, *, platform: str) -> SocialDownloadBundle:
+    return await asyncio.to_thread(_extract_ytdlp_bundle, source_url, platform)
 
 
 def _bundle_from_fixtweet_payload(data, endpoint_name: str, status_id: str) -> SocialDownloadBundle:
@@ -1077,39 +946,12 @@ async def get_social_bundle(platform: str, url: str) -> SocialDownloadBundle:
                 ("TikWM", "tiktok:tikwm", lambda: _fetch_tiktok_via_tikwm(client, safe_url))
             )
 
-        strategies.extend(
-            [
-                (
-                    "Pybalt",
-                    "cobalt:pybalt",
-                    lambda: _fetch_via_cobalt_api(
-                        client,
-                        safe_url,
-                        endpoint=PYBALT_API_URL,
-                        source_name="Pybalt",
-                    ),
-                ),
-                (
-                    "Legacy API",
-                    "cobalt:legacy",
-                    lambda: _fetch_via_cobalt_api(
-                        client,
-                        safe_url,
-                        endpoint=LEGACY_COBALT_API_URL,
-                        source_name="Legacy API",
-                    ),
-                ),
-                (
-                    "Public Cobalt Tracker",
-                    "cobalt:tracker_pool",
-                    lambda: _fetch_via_tracker_instances(
-                        client,
-                        safe_url,
-                        platform=platform,
-                        excluded_endpoints={PYBALT_API_URL, LEGACY_COBALT_API_URL},
-                    ),
-                ),
-            ]
+        strategies.append(
+            (
+                "yt-dlp",
+                f"ytdlp:{platform}",
+                lambda: _fetch_via_ytdlp(safe_url, platform=platform),
+            )
         )
 
         for label, cooldown_key, runner in strategies:

@@ -51,7 +51,7 @@
 ## 🌟 What is PlanetXrobot?
 
 **PlanetXrobot** is a modern Telegram bot that streams **high-quality music** into group voice chats.
-Powered by **Pyrogram + PyTgCalls**, it supports multiple platforms like **YouTube, Spotify, Apple Music, SoundCloud, Resso, and more**.
+Powered by **Pyrogram + PyTgCalls**, it supports multiple platforms like **YouTube, Spotify, Apple Music, SoundCloud, and more**.
 It also includes **basic group management features** for convenience.
 
 ## 🚀 Features
@@ -65,7 +65,7 @@ It also includes **basic group management features** for convenience.
 | 🌟 Feature                | 🔎 Description                              |
 | ------------------------- | ------------------------------------------- |
 | 🎶 HQ Music Streaming     | Lag‑free HD audio in group voice chats      |
-| 🌐 Multi‑Platform Sources | YouTube, Spotify, Apple Music, Resso, etc.  |
+| 🌐 Multi‑Platform Sources | YouTube, Spotify, Apple Music, SoundCloud, etc. |
 | 👮 Group Management Tools | Promote/demote, mute/kick, etc.     |
 | ⚡ Fast Setup              | One‑click Heroku, VPS, or Docker deployment |
 | 🔄 Auto Config            | Quick setup script with pre‑checks          |
@@ -90,6 +90,8 @@ COOKIE_URL=          # Required - YT Cookies url
 
 API_KEY=             # Optional - External API key for music Download
 API_URL=             # Optional - External API url for music Download
+WORKER_API_URL=      # Optional - Primary YouTube worker API endpoint
+WORKER_API_KEY=      # Optional - Primary YouTube worker API key
 REPLICATE_API_TOKEN= # Optional - Recommended for reliable /genvid via Replicate
 REPLICATE_API_TOKENS= # Optional - Comma-separated Replicate token pool for /genvid failover
 GENVID_USE_PUBLIC_FALLBACKS=0  # Optional - Set 1 if you still want no-key public backups after Replicate
@@ -98,7 +100,7 @@ HF_TOKENS=           # Optional - Comma-separated Hugging Face token pool for Sp
 OCR_SPACE_API_KEY=helloworld  # Optional - OCR.Space key; shared free demo key works with low-rate OCR
 ```
 
-⚠️ **Never expose raw cookies or tokens in public repos.** Use safe paste services like [Pastebin](https://pastebin.com) or [Batbin](https://batbin.me).
+⚠️ **Never expose raw cookies or tokens in public repos.** Use safe paste services like [Pastebin](https://pastebin.com) or [paste.rs](https://paste.rs).
 
 ##
 
@@ -173,7 +175,7 @@ OCR_SPACE_API_KEY=helloworld  # Optional - OCR.Space key; shared free demo key w
       </tr>
       <tr>
         <td><code>COOKIE_URL</code></td>
-        <td>Any secure host (e.g., <a href="https://pastebin.com" target="_blank">Pastebin</a>, <a href="https://batbin.me" target="_blank">Batbin</a>)</td>
+        <td>Any secure host (e.g., <a href="https://pastebin.com" target="_blank">Pastebin</a>, <a href="https://paste.rs" target="_blank">paste.rs</a>)</td>
         <td>
           1) Upload your <code>cookies.txt</code> privately →
           2) Set paste visibility to <b>Unlisted</b> →

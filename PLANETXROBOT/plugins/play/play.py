@@ -10,7 +10,7 @@ from pytgcalls.exceptions import NoActiveGroupCall
 
 import config
 from config import AYU, BANNED_USERS, lyrical
-from PLANETXROBOT import Apple, Resso, SoundCloud, Spotify, Telegram, YouTube, app
+from PLANETXROBOT import Apple, SoundCloud, Spotify, Telegram, YouTube, app
 from PLANETXROBOT.core.call import JARVIS
 from PLANETXROBOT.utils import seconds_to_min, time_to_seconds
 from PLANETXROBOT.utils.channelplay import get_channeplayCB
@@ -380,18 +380,6 @@ async def play_command(
             else:
                 await log_play_failure("Apple Music", "Unsupported Apple Music URL", query_text=url)
                 return await mystic.edit_text(_["play_3"])
-
-        elif await Resso.valid(url):
-            try:
-                details, track_id = await Resso.track(url)
-            except Exception as e:
-                await log_play_failure("Resso", e, query_text=url, stream_label="Resso")
-                return await mystic.edit_text(_["play_3"])
-
-            img = details["thumb"]
-            cap = _["play_10"].format(details["title"], details["duration_min"])
-            internal_type = "youtube"
-            log_label = "Resso"
 
         elif await SoundCloud.valid(url):
             try:

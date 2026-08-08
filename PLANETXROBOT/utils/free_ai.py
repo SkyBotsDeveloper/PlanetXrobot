@@ -43,17 +43,13 @@ ELITE_LLM_API_KEY = getattr(runtime_config, "ELITE_LLM_API_KEY", "theelitekey")
 
 HTTP_TIMEOUT = httpx.Timeout(45.0, connect=10.0)
 HTTP_HEADERS = {"User-Agent": "VivaanX/FreeAI/1.0"}
-CHAT_API_URL = "https://api-xqwa.onrender.com/chat/"
 ELITE_CHAT_COMPLETIONS_URL = f"{ELITE_LLM_API_BASE}/chat/completions"
-AIRFORCE_CHAT_COMPLETIONS_URL = "https://api.airforce/v1/chat/completions"
+YQCLOUD_CHAT_URL = "https://api.binjie.fun/api/generateStream"
+YQCLOUD_CHAT_ORIGIN = "https://chat9.yqcloud.top"
 IMAGE_GEN_URL = "https://death-image.ashlynn.workers.dev/generate"
 POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}"
-IMAGE_ENHANCE_URL = "https://arimagex.netlify.app/api/enhance"
-IMAGE_REMOVEBG_URL = "https://arimagex.netlify.app/api/removebg"
 OCR_SPACE_API_URL = "https://api.ocr.space/parse/image"
 REPLICATE_API_URL = "https://api.replicate.com/v1"
-TEXT_VIDEO_MJ_URL = "https://text-to-video-mj.vercel.app/generate"
-TEXT_VIDEO_MJ_PROXY_URL = "https://mag.dhanjeerider.workers.dev/"
 VHEER_BASE_URL = "https://vheer.com"
 VHEER_UPLOAD_URL = f"{VHEER_BASE_URL}/app/api/vheer/upload"
 VHEER_STATUS_URL = f"{VHEER_BASE_URL}/app/api/vheer/status"
@@ -95,7 +91,6 @@ DETAILED_VISION_PROMPT = (
 )
 VISION_PROVIDER_TIMEOUT = 50
 OCR_VISIBLE_TEXT_LIMIT = 900
-CHAT_MODEL_CANDIDATES = ("gpt-4o-mini", "gpt-4")
 ELITE_CHAT_MODEL_FALLBACKS = {
     "eliteai": ("gpt-5-mini", "gpt-4o-mini", "qwen3-235b-a22b-2507", "deepseek-chat"),
     "chatgpt": ("gpt-5-mini", "gpt-4o-mini", "gpt-4.1", "gpt-4o"),
@@ -109,19 +104,7 @@ ELITE_CHAT_MODEL_FALLBACKS = {
     "claude": ("claude-sonnet-4.6", "claude-opus-4.6", "gpt-5-mini"),
     "geminivision": ("gemini-2.0-flash", "gpt-5-mini", "qwen3-235b-a22b-2507"),
 }
-AIRFORCE_CHAT_MODEL_FALLBACKS = {
-    "eliteai": ("gpt-4o-mini", "deepseek-chat", "llama-3.3-70b"),
-    "chatgpt": ("gpt-4o-mini", "gpt-4o", "deepseek-chat"),
-    "gpt": ("gpt-4o-mini", "gpt-4o", "deepseek-chat"),
-    "jarvis": ("gpt-4o-mini", "deepseek-chat", "llama-3.3-70b"),
-    "assis": ("gpt-4o-mini", "deepseek-chat", "llama-3.3-70b"),
-    "gemini": ("gpt-4o-mini", "deepseek-chat"),
-    "bard": ("gpt-4o-mini", "deepseek-chat"),
-    "llama": ("llama-3.3-70b", "gpt-4o-mini", "deepseek-chat"),
-    "mistral": ("mistral-small-latest", "gpt-4o-mini", "deepseek-chat"),
-    "claude": ("gpt-4o-mini", "deepseek-chat"),
-    "geminivision": ("gpt-4o-mini", "deepseek-chat"),
-}
+YQCLOUD_CHAT_MODEL = "gpt-4"
 CHAT_ALIAS_PROFILES = {
     "eliteai": {
         "display_name": "Elite AI",
@@ -1547,77 +1530,6 @@ def _run_replicate_kling_video(
     )
 
 
-def _extract_simple_video_json_url(payload) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    if str(payload.get("status") or "").lower() not in {"success", "ok"}:
-        return None
-    value = str(payload.get("url") or "").strip()
-    return value or None
-
-
-def _run_text_video_mj_api(
-    api_url: str,
-    prompt: str,
-    timeout_seconds: int,
-) -> str:
-    request_timeout = httpx.Timeout(max(timeout_seconds, 30), connect=10.0)
-    async_headers = dict(HTTP_HEADERS)
-    with httpx.Client(
-        timeout=request_timeout,
-        headers=async_headers,
-        follow_redirects=True,
-        trust_env=False,
-    ) as client:
-        response = client.get(
-            api_url,
-            params={"prompt": prompt},
-        )
-        if response.status_code >= 400:
-            raise FreeAIError(response.text.strip() or "Text-to-video API request failed.")
-
-        try:
-            payload = response.json()
-        except Exception:
-            text = response.text.strip()
-            if text.startswith("{") and text.endswith("}"):
-                try:
-                    import json
-
-                    payload = json.loads(text)
-                except Exception as exc:
-                    raise FreeAIError("Text-to-video API returned an invalid response.") from exc
-            else:
-                raise FreeAIError("Text-to-video API returned an invalid response.")
-
-        video_url = _extract_simple_video_json_url(payload)
-        if video_url:
-            return video_url
-
-        detail = _extract_json_error(payload)
-        raise FreeAIError(detail or "Text-to-video API returned no video.")
-
-
-def _run_vidforge_text_video(
-    prompt: str,
-    reference_image_path: str | None,
-    timeout_seconds: int,
-) -> str:
-    if reference_image_path:
-        raise FreeAIError("VidForge text-to-video does not support reference images.")
-    return _run_text_video_mj_api(TEXT_VIDEO_MJ_URL, prompt, timeout_seconds)
-
-
-def _run_vidforge_proxy_text_video(
-    prompt: str,
-    reference_image_path: str | None,
-    timeout_seconds: int,
-) -> str:
-    if reference_image_path:
-        raise FreeAIError("VidForge proxy text-to-video does not support reference images.")
-    return _run_text_video_mj_api(TEXT_VIDEO_MJ_PROXY_URL, prompt, timeout_seconds)
-
-
 def _run_alava_wan_demo(
     prompt: str,
     reference_image_path: str | None,
@@ -2485,13 +2397,6 @@ def _chat_models_for_alias(alias: str) -> tuple[str, ...]:
     return ELITE_CHAT_MODEL_FALLBACKS["gpt"]
 
 
-def _airforce_models_for_alias(alias: str) -> tuple[str, ...]:
-    models = AIRFORCE_CHAT_MODEL_FALLBACKS.get(alias.lower())
-    if models:
-        return models
-    return AIRFORCE_CHAT_MODEL_FALLBACKS["gpt"]
-
-
 def _extract_openai_error(payload) -> str:
     if isinstance(payload, dict):
         error = payload.get("error")
@@ -2576,67 +2481,43 @@ async def _elite_chat_request(
     return ChatResult(model=returned_model or model, content=cleaned)
 
 
-async def _airforce_chat_request(
+async def _yqcloud_chat_request(
     client: httpx.AsyncClient,
     prompt: str,
     model: str,
     system_prompt: str | None = None,
 ) -> ChatResult:
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
-
     response = await client.post(
-        AIRFORCE_CHAT_COMPLETIONS_URL,
-        headers={"Content-Type": "application/json"},
+        YQCLOUD_CHAT_URL,
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": YQCLOUD_CHAT_ORIGIN,
+            "Referer": f"{YQCLOUD_CHAT_ORIGIN}/",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/133.0.0.0 Safari/537.36"
+            ),
+        },
         json={
-            "model": model,
-            "messages": messages,
-            "temperature": 0.6,
-            "max_tokens": 1800,
+            "prompt": prompt,
+            "userId": f"#/chat/{int(time.time() * 1000)}",
+            "network": True,
+            "system": system_prompt or "",
+            "withoutContext": False,
+            "stream": True,
         },
     )
-    try:
-        payload = response.json()
-    except Exception as exc:
-        raise FreeAIError(
-            f"Airforce API returned a non-JSON response ({response.status_code})."
-        ) from exc
-
     if response.status_code != 200:
-        raise FreeAIError(_extract_openai_error(payload))
-
-    returned_model, cleaned = _extract_openai_content(payload)
-    if not cleaned:
-        raise FreeAIError("Airforce API response was empty or blocked.")
-    return ChatResult(model=returned_model or model, content=cleaned)
-
-
-async def _legacy_chat_request(
-    client: httpx.AsyncClient,
-    prompt: str,
-    model: str,
-    system_prompt: str | None = None,
-) -> ChatResult:
-    params = {"question": prompt, "model": model}
-    if system_prompt:
-        params["systemprompt"] = system_prompt
-
-    response = await client.get(CHAT_API_URL, params=params)
-    try:
-        payload = response.json()
-    except Exception as exc:
         raise FreeAIError(
-            f"Legacy chat returned a non-JSON response ({response.status_code})."
-        ) from exc
-    if response.status_code != 200 or payload.get("successful") != "success":
-        raise FreeAIError(_extract_json_error(payload))
+            response.text.strip() or f"Yqcloud returned HTTP {response.status_code}."
+        )
 
-    cleaned = _sanitize_chat_text(payload.get("response"))
+    cleaned = _sanitize_chat_text(response.text)
     if not cleaned:
-        raise FreeAIError("Upstream chat response was empty or promotional.")
-    return ChatResult(model=str(payload.get("model") or model), content=cleaned)
+        raise FreeAIError("Yqcloud response was empty or blocked.")
+    return ChatResult(model=model, content=cleaned)
 
 
 async def generate_chat_response(
@@ -2684,16 +2565,15 @@ async def generate_chat_response(
                 _set_provider_cooldown(provider_key, message)
                 failures.append(f"Elite {model}: {message}")
 
-        for model in _airforce_models_for_alias(alias):
-            provider_key = f"chat:airforce:{model}"
-            if _provider_cooldown_remaining(provider_key) > 0:
-                failures.append(f"Airforce {model}: cooling down")
-                continue
+        provider_key = f"chat:yqcloud:{YQCLOUD_CHAT_MODEL}"
+        if _provider_cooldown_remaining(provider_key) > 0:
+            failures.append(f"Yqcloud {YQCLOUD_CHAT_MODEL}: cooling down")
+        else:
             try:
-                result = await _airforce_chat_request(
+                result = await _yqcloud_chat_request(
                     client,
                     prompt,
-                    model,
+                    YQCLOUD_CHAT_MODEL,
                     combined_system_prompt,
                 )
                 _clear_provider_cooldown(provider_key)
@@ -2704,32 +2584,8 @@ async def generate_chat_response(
             except (httpx.HTTPError, FreeAIError) as exc:
                 message = str(exc)
                 _set_provider_cooldown(provider_key, message)
-                failures.append(f"Airforce {model}: {message}")
+                failures.append(f"Yqcloud {YQCLOUD_CHAT_MODEL}: {message}")
 
-        for model in CHAT_MODEL_CANDIDATES:
-            for attempt in range(2):
-                provider_key = f"chat:legacy:{model}"
-                if _provider_cooldown_remaining(provider_key) > 0:
-                    failures.append(f"Legacy {model}: cooling down")
-                    break
-                try:
-                    result = await _legacy_chat_request(
-                        client,
-                        prompt,
-                        model,
-                        combined_system_prompt,
-                    )
-                    _clear_provider_cooldown(provider_key)
-                    return ChatResult(
-                        model=display_name,
-                        content=result.content,
-                    )
-                except (httpx.HTTPError, FreeAIError) as exc:
-                    message = str(exc)
-                    _set_provider_cooldown(provider_key, message)
-                    failures.append(f"Legacy {model} attempt {attempt + 1}: {message}")
-                    if _provider_cooldown_remaining(provider_key) > 0:
-                        break
     details = "\n".join(failures[:8])
     raise FreeAIError(f"Chat service is temporarily unavailable.\n{details}")
 
@@ -3776,54 +3632,10 @@ async def process_image_bytes(
     mode: str,
 ) -> bytes:
     if mode == "enhance":
-        endpoint = IMAGE_ENHANCE_URL
-    elif mode == "removebg":
-        endpoint = IMAGE_REMOVEBG_URL
-    else:
-        raise FreeAIError(f"Unsupported image mode: {mode}")
-
-    payload = {"imageUrl": _build_data_uri(mime_type, image_bytes)}
-    try:
-        async with httpx.AsyncClient(
-            timeout=HTTP_TIMEOUT,
-            headers=HTTP_HEADERS,
-            follow_redirects=True,
-            trust_env=False,
-        ) as client:
-            response = await client.post(endpoint, json=payload)
-            content_type = (response.headers.get("content-type") or "").lower()
-            if response.status_code != 200:
-                if "application/json" in content_type:
-                    raise FreeAIError(_extract_json_error(response.json()))
-                raise FreeAIError("Image processing service returned a non-200 response.")
-            if "application/json" in content_type:
-                payload = response.json()
-                image_url = payload.get("imageUrl")
-                if not image_url:
-                    raise FreeAIError(_extract_json_error(payload))
-                image_response = await client.get(image_url)
-                if image_response.status_code != 200:
-                    raise FreeAIError("Processed image could not be downloaded.")
-                return image_response.content
-            if not content_type.startswith("image/"):
-                raise FreeAIError(
-                    "Image processing service returned an unexpected payload."
-                )
-            return response.content
-    except Exception as exc:
-        if mode == "enhance":
-            try:
-                return await asyncio.to_thread(_enhance_image_locally, image_bytes)
-            except Exception:
-                pass
-        if mode == "removebg":
-            try:
-                return await asyncio.to_thread(_remove_background_locally, image_bytes)
-            except Exception:
-                pass
-        if isinstance(exc, FreeAIError):
-            raise
-        raise FreeAIError(f"Image processing service failed: {exc}") from exc
+        return await asyncio.to_thread(_enhance_image_locally, image_bytes)
+    if mode == "removebg":
+        return await asyncio.to_thread(_remove_background_locally, image_bytes)
+    raise FreeAIError(f"Unsupported image mode: {mode}")
 
 
 async def generate_video(
@@ -3970,25 +3782,6 @@ async def generate_video(
                         ],
                     ]
                 )
-
-            provider_batches.append(
-                [
-                    VideoProvider(
-                        "VidForge / MJ T2V",
-                        70,
-                        False,
-                        False,
-                        _run_vidforge_text_video,
-                    ),
-                    VideoProvider(
-                        "VidForge Proxy / MJ T2V",
-                        80,
-                        False,
-                        False,
-                        _run_vidforge_proxy_text_video,
-                    ),
-                ]
-            )
 
         for batch in provider_batches:
             result = await _run_video_provider_batch(

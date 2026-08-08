@@ -1,47 +1,32 @@
 import aiohttp
 
 
-import socket
-from asyncio import get_running_loop
-from functools import partial
+PASTE_RS_URL = "https://paste.rs"
+PASTE_HEADERS = {
+    "Accept": "text/plain",
+    "Content-Type": "text/plain; charset=utf-8",
+    "User-Agent": "PlanetXrobotBot/1.0",
+}
 
 
-def _netcat(host, port, content):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((host, port))
-    s.sendall(content.encode())
-    s.shutdown(socket.SHUT_WR)
-    while True:
-        data = s.recv(4096).decode("utf-8").strip("\n\x00")
-        if not data:
-            break
-        return data
-    s.close()
+async def _paste_rs(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return ""
+
+    async with aiohttp.ClientSession(headers=PASTE_HEADERS) as session:
+        async with session.post(PASTE_RS_URL, data=text.encode("utf-8")) as resp:
+            body = (await resp.text()).strip()
+            if resp.status not in {200, 201} or not body.startswith(
+                "https://paste.rs/"
+            ):
+                raise RuntimeError(f"Paste service returned HTTP {resp.status}.")
+            return body
 
 
 async def paste(content):
-    loop = get_running_loop()
-    link = await loop.run_in_executor(None, partial(_netcat, "ezup.dev", 9999, content))
-    return link
-
-####2nd paste code 
-
-BASE = "https://batbin.me/"
-
-
-async def post(url: str, *args, **kwargs):
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, *args, **kwargs) as resp:
-            try:
-                data = await resp.json()
-            except Exception:
-                data = await resp.text()
-        return data
+    return await _paste_rs(content)
 
 
 async def PLANETXBIN(text):
-    resp = await post(f"{BASE}api/v2/paste", data=text)
-    if not resp["success"]:
-        return
-    link = BASE + resp["message"]
-    return link
+    return await _paste_rs(text)

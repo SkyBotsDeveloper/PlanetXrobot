@@ -25,7 +25,6 @@ _YOUTUBE_HOSTS = {
 _SPOTIFY_HOSTS = {"open.spotify.com"}
 _APPLE_HOSTS = {"music.apple.com"}
 _SOUNDCLOUD_HOSTS = {"soundcloud.com", "on.soundcloud.com"}
-_RESSO_HOSTS = {"www.resso.com", "resso.com", "m.resso.com"}
 
 
 def _decode_layers(value: str, rounds: int = 3) -> str:
@@ -82,8 +81,5 @@ def is_safe_media_url(url: str) -> bool:
 
     if hostname in _SOUNDCLOUD_HOSTS:
         return len([part for part in parsed.path.split("/") if part]) >= 1
-
-    if hostname in _RESSO_HOSTS:
-        return parsed.path.startswith("/")
 
     return True

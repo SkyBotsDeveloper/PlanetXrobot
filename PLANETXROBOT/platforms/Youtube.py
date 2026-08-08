@@ -25,18 +25,12 @@ from PLANETXROBOT.utils.formatters import time_to_seconds
 from PLANETXROBOT.utils.url_guard import is_safe_media_url
 from PLANETXROBOT.security import build_subprocess_env
 from PLANETXROBOT.utils.stream.source_status import set_youtube_source_status
-from config import DURATION_LIMIT, YT_API_KEY, YTPROXY_URL, autoclean
+from config import DURATION_LIMIT, WORKER_API_KEY, WORKER_API_URL, autoclean
 
 logger = LOGGER(__name__)
 
-# Worker API (kept configurable through env for production overrides)
-WORKER_FALLBACK_API_URL = os.getenv(
-    "WORKER_FALLBACK_API_URL",
-    "https://youtubenewapi.skybotsdeveloper.workers.dev",
-).strip()
-WORKER_FALLBACK_API_KEY = os.getenv("WORKER_FALLBACK_API_KEY", "itsmesid").strip()
-YTPROXY = (YTPROXY_URL or "").strip().rstrip("/")
-YT_API_KEY = (YT_API_KEY or "").strip()
+WORKER_API_URL = (WORKER_API_URL or "").strip().rstrip("/")
+WORKER_API_KEY = (WORKER_API_KEY or "").strip()
 MIN_CACHED_MEDIA_BYTES = 128 * 1024
 DOWNLOAD_CACHE_EXTENSIONS = (".m4a", ".mp3", ".mp4", ".webm")
 
@@ -974,10 +968,7 @@ class YouTubeAPI:
             state = "OK" if ok else "FAILED"
             pretty_sources = {
                 "LOCAL CACHE": "local cache",
-                "WORKER PRIMARY": "worker primary",
-                "WORKER FALLBACK": "worker fallback",
-                "XBIT FALLBACK": "xBit fallback",
-                "WORKER PRIMARY + XBIT FALLBACK": "worker primary + xBit fallback",
+                "WORKER API": "worker api",
             }
             pretty_media = {"audio": "audio", "video": "video"}.get(media_type, media_type)
             pretty_state = "ok" if ok else "failed"
@@ -995,30 +986,12 @@ class YouTubeAPI:
                 log_title,
             )
 
-        def log_primary_api_issue(media_type, vid_id, message):
-            if WORKER_FALLBACK_API_URL and WORKER_FALLBACK_API_KEY:
-                logger.info(
-                    "xBit fallback API failed | media=%s | video_id=%s | title=%s | reason=%s | next=none",
-                    media_type,
-                    vid_id,
-                    log_title,
-                    message,
-                )
-                return
-            logger.warning(
-                "xBit fallback API failed | media=%s | video_id=%s | title=%s | reason=%s | next=none",
-                media_type,
-                vid_id,
-                log_title,
-                message,
-            )
-
         def schedule_worker_background_cache(media, filepath, media_type, vid_id):
             cache_url = (media or {}).get("cache_url") or (media or {}).get("play_url")
             if not cache_url:
                 return
             logger.info(
-                "YouTube background cache scheduled | source=worker_primary | media=%s | video_id=%s | title=%s | play_link=%s | cache_link=%s | same_url=%s",
+                "YouTube background cache scheduled | source=worker_api | media=%s | video_id=%s | title=%s | play_link=%s | cache_link=%s | same_url=%s",
                 media_type,
                 vid_id,
                 log_title,
@@ -1028,17 +1001,17 @@ class YouTubeAPI:
             )
             schedule_background_cache(cache_url, filepath)
 
-        def fetch_worker_fallback_links_sync(vid_id, media_format):
-            if not WORKER_FALLBACK_API_URL or not WORKER_FALLBACK_API_KEY:
-                logger.warning("Worker fallback API URL/key not set. Skipping worker fallback.")
+        def fetch_worker_links_sync(vid_id, media_format):
+            if not WORKER_API_URL or not WORKER_API_KEY:
+                logger.warning("Worker API URL/key not set. Skipping YouTube worker API.")
                 return None
 
             session = None
             try:
                 session = create_session()
-                api_url = f"{WORKER_FALLBACK_API_URL.rstrip('/')}/api"
+                api_url = f"{WORKER_API_URL}/api"
                 payload = {
-                    "key": WORKER_FALLBACK_API_KEY,
+                    "key": WORKER_API_KEY,
                     "url": f"https://youtube.com/watch?v={vid_id}",
                     "format": media_format,
                 }
@@ -1049,7 +1022,7 @@ class YouTubeAPI:
 
                 if not data.get("success"):
                     logger.error(
-                        "Worker fallback API failed | format=%s | video_id=%s | title=%s | reason=%s",
+                        "Worker API failed | format=%s | video_id=%s | title=%s | reason=%s",
                         media_format,
                         vid_id,
                         log_title,
@@ -1060,14 +1033,14 @@ class YouTubeAPI:
                 media = select_media_links(data, media_format, prefer_stream=bool(stream))
                 if not media.get("play_url"):
                     logger.error(
-                        "Worker fallback API failed | format=%s | video_id=%s | title=%s | reason=no media url",
+                        "Worker API failed | format=%s | video_id=%s | title=%s | reason=no media url",
                         media_format,
                         vid_id,
                         log_title,
                     )
                     return None
                 logger.info(
-                    "Worker fallback API selected | format=%s | video_id=%s | title=%s | play_link=%s | cache_link=%s",
+                    "Worker API selected | format=%s | video_id=%s | title=%s | play_link=%s | cache_link=%s",
                     media_format,
                     vid_id,
                     log_title,
@@ -1077,7 +1050,7 @@ class YouTubeAPI:
                 return media
             except Exception as e:
                 logger.error(
-                    "Worker fallback API failed | format=%s | video_id=%s | title=%s | reason=%s",
+                    "Worker API failed | format=%s | video_id=%s | title=%s | reason=%s",
                     media_format,
                     vid_id,
                     log_title,
@@ -1088,9 +1061,9 @@ class YouTubeAPI:
                 if session:
                     session.close()
 
-        async def get_worker_fallback_links(vid_id, media_format):
+        async def get_worker_links(vid_id, media_format):
             return await loop.run_in_executor(
-                None, fetch_worker_fallback_links_sync, vid_id, media_format
+                None, fetch_worker_links_sync, vid_id, media_format
             )
 
         async def audio_dl(vid_id):
@@ -1108,73 +1081,23 @@ class YouTubeAPI:
                 if cached:
                     return cached, True
 
-            headers = {
-                "x-api-key": f"{YT_API_KEY}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-
-            worker_audio = await get_worker_fallback_links(vid_id, "mp3")
+            worker_audio = await get_worker_links(vid_id, "mp3")
             if worker_audio:
                 worker_audio_url = worker_audio.get("play_url")
                 worker_audio_cache_url = worker_audio.get("cache_url") or worker_audio_url
                 if stream and await validate_stream_source(worker_audio_url):
-                    mark_source(vid_id, "audio", "WORKER PRIMARY")
+                    mark_source(vid_id, "audio", "WORKER API")
                     schedule_worker_background_cache(worker_audio, filepath, "audio", vid_id)
                     return worker_audio_url, False
                 result = await download_from_source(worker_audio_cache_url, filepath)
                 if result:
-                    mark_source(vid_id, "audio", "WORKER PRIMARY")
+                    mark_source(vid_id, "audio", "WORKER API")
                     return result, True
-                logger.warning("Worker audio URL download failed, trying xBit fallback.")
+                logger.warning("Worker audio URL download failed.")
 
-            xbit_audio_url = None
-            if YT_API_KEY and YTPROXY:
-                session = None
-                try:
-                    session = create_session()
-                    get_audio = session.get(f"{YTPROXY}/info/{vid_id}", headers=headers, timeout=60)
-                    song_data = get_audio.json()
-                    status = song_data.get('status')
-
-                    if status == 'success':
-                        xbit_audio_url = song_data.get('audio_url')
-                    elif status == 'error':
-                        log_primary_api_issue(
-                            "audio",
-                            vid_id,
-                            song_data.get('message', 'Unknown error from API.'),
-                        )
-                    else:
-                        log_primary_api_issue(
-                            "audio",
-                            vid_id,
-                            "unexpected response while fetching audio",
-                        )
-                except requests.exceptions.RequestException as e:
-                    log_primary_api_issue("audio", vid_id, f"network error: {str(e)}")
-                except json.JSONDecodeError as e:
-                    log_primary_api_issue("audio", vid_id, f"invalid response: {str(e)}")
-                except Exception as e:
-                    log_primary_api_issue("audio", vid_id, str(e))
-                finally:
-                    if session:
-                        session.close()
-            else:
-                logger.info("xBit fallback not configured for audio.")
-
-            if xbit_audio_url:
-                if stream and await validate_stream_source(xbit_audio_url):
-                    mark_source(vid_id, "audio", "XBIT FALLBACK")
-                    schedule_background_cache(xbit_audio_url, filepath, headers)
-                    return xbit_audio_url, False
-                result = await download_from_source(xbit_audio_url, filepath, headers)
-                if result:
-                    mark_source(vid_id, "audio", "XBIT FALLBACK")
-                    return result, True
-
-            mark_source(vid_id, "audio", "WORKER PRIMARY + XBIT FALLBACK", ok=False)
+            mark_source(vid_id, "audio", "WORKER API", ok=False)
             logger.error(
-                "YouTube source failed | sources=worker_primary,xbit_fallback | media=audio | video_id=%s | title=%s",
+                "YouTube source failed | source=worker_api | media=audio | video_id=%s | title=%s",
                 vid_id,
                 log_title,
             )
@@ -1196,73 +1119,23 @@ class YouTubeAPI:
                 if cached:
                     return cached, True
 
-            headers = {
-                "x-api-key": f"{YT_API_KEY}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-
-            worker_video = await get_worker_fallback_links(vid_id, "mp4")
+            worker_video = await get_worker_links(vid_id, "mp4")
             if worker_video:
                 worker_video_url = worker_video.get("play_url")
                 worker_video_cache_url = worker_video.get("cache_url") or worker_video_url
                 if stream and await validate_stream_source(worker_video_url):
-                    mark_source(vid_id, "video", "WORKER PRIMARY")
+                    mark_source(vid_id, "video", "WORKER API")
                     schedule_worker_background_cache(worker_video, filepath, "video", vid_id)
                     return worker_video_url, False
                 result = await download_from_source(worker_video_cache_url, filepath)
                 if result:
-                    mark_source(vid_id, "video", "WORKER PRIMARY")
+                    mark_source(vid_id, "video", "WORKER API")
                     return result, True
-                logger.warning("Worker video URL download failed, trying xBit fallback.")
+                logger.warning("Worker video URL download failed.")
 
-            xbit_video_url = None
-            if YT_API_KEY and YTPROXY:
-                session = None
-                try:
-                    session = create_session()
-                    get_video = session.get(f"{YTPROXY}/info/{vid_id}", headers=headers, timeout=60)
-                    video_data = get_video.json()
-                    status = video_data.get('status')
-
-                    if status == 'success':
-                        xbit_video_url = video_data.get('video_url')
-                    elif status == 'error':
-                        log_primary_api_issue(
-                            "video",
-                            vid_id,
-                            video_data.get('message', 'Unknown error from API.'),
-                        )
-                    else:
-                        log_primary_api_issue(
-                            "video",
-                            vid_id,
-                            "unexpected response while fetching video",
-                        )
-                except requests.exceptions.RequestException as e:
-                    log_primary_api_issue("video", vid_id, f"network error: {str(e)}")
-                except json.JSONDecodeError as e:
-                    log_primary_api_issue("video", vid_id, f"invalid response: {str(e)}")
-                except Exception as e:
-                    log_primary_api_issue("video", vid_id, str(e))
-                finally:
-                    if session:
-                        session.close()
-            else:
-                logger.info("xBit fallback not configured for video.")
-
-            if xbit_video_url:
-                if stream and await validate_stream_source(xbit_video_url):
-                    mark_source(vid_id, "video", "XBIT FALLBACK")
-                    schedule_background_cache(xbit_video_url, filepath, headers)
-                    return xbit_video_url, False
-                result = await download_from_source(xbit_video_url, filepath, headers)
-                if result:
-                    mark_source(vid_id, "video", "XBIT FALLBACK")
-                    return result, True
-
-            mark_source(vid_id, "video", "WORKER PRIMARY + XBIT FALLBACK", ok=False)
+            mark_source(vid_id, "video", "WORKER API", ok=False)
             logger.error(
-                "YouTube source failed | sources=worker_primary,xbit_fallback | media=video | video_id=%s | title=%s",
+                "YouTube source failed | source=worker_api | media=video | video_id=%s | title=%s",
                 vid_id,
                 log_title,
             )
