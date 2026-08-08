@@ -26,7 +26,7 @@
 </p>
 
 <h1 align="center">
-  <img src="https://readme-typing-svg.herokuapp.com?color=FF69B4&width=500&lines=Welcome+to+Planetx+%F0%9F%8E%B6+The+bot;Your+Ultimate+Telegram+Music+Bot" />
+  <img src="https://readme-typing-svg.herokuapp.com?color=FF69B4&width=500&lines=Welcome+to+PlanetxRobot+%F0%9F%8E%B6+The+bot;Your+Ultimate+Telegram+Multifunctional+Bot" />
 </h1>
 
 <p align="center">
