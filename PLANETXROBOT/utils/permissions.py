@@ -24,7 +24,7 @@ def parse_time(time_str: str) -> Optional[dt.timedelta]:
     if len(time_str) < 2:
         return None
     unit = time_str[-1].lower()
-    if unit not in {"s", "m", "h", "d"}:
+    if unit not in {"s", "m", "h", "d", "w"}:
         return None
     try:
         value = int(time_str[:-1])
@@ -38,6 +38,8 @@ def parse_time(time_str: str) -> Optional[dt.timedelta]:
         return dt.timedelta(hours=value)
     if unit == "d":
         return dt.timedelta(days=value)
+    if unit == "w":
+        return dt.timedelta(weeks=value)
     return None
 
 

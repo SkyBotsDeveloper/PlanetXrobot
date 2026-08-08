@@ -355,3 +355,38 @@ HELP_34 = """
 
 Needs bot admin permission to delete messages.
 """
+
+HELP_35 = """
+<b><u>Group Guard</u></b>
+
+<b>Rules</b>
+- /rules - show the chat rules.
+- /setrules [text] - set rules, or reply with /setrules.
+- /resetrules - clear rules.
+
+<b>Notes</b>
+- /save [name] [text] - save a text/media note.
+- /get [name] or #[name] - fetch a saved note.
+- /notes - list notes.
+- /clear [name] - delete a note.
+
+<b>Warnings & Reports</b>
+- /warn, /dwarn, /swarn [user] [reason] - warn users.
+- /warns [user], /rmwarn [user], /resetwarn [user].
+- /setwarnlimit [number] - set max warnings.
+- /setwarnmode [ban|kick|mute] [duration] - action after warn limit.
+- /report [reason] or @admin - report a replied message to admins.
+- /reports [on|off] - enable or disable reports.
+
+<b>Locks, Blocklist & Flood</b>
+- /lock [type], /unlock [type], /locks, /locktypes.
+- /addblocklist [word or phrase] - add blocked text; use `trigger | reason` for a reason.
+- /blocklist, /rmblocklist [trigger], /rmblocklistall.
+- /blocklistmode [delete|warn|mute|kick|ban|nothing].
+- /setflood [number] - messages allowed in the flood window; 0 disables.
+- /setfloodtimer [seconds] - set flood window.
+- /setfloodmode [ban|kick|mute] [duration].
+- /clearflood - reset flood counters.
+
+Durations support s/m/h/d/w, for example 30m or 1w.
+"""

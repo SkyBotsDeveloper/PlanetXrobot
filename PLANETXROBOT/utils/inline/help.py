@@ -4,7 +4,7 @@ from PLANETXROBOT import app
 from PLANETXROBOT.button_styles import danger_button, primary_button
 
 
-TOTAL_SECTIONS = 34
+TOTAL_SECTIONS = 35
 BUTTON_LABEL_OVERRIDES = {
     25: "Dᴏᴡɴʟᴏᴀᴅ",
 }
