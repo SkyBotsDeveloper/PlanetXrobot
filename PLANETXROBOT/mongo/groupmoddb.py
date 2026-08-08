@@ -10,6 +10,7 @@ _notes = mongodb["group_notes"]
 _warns = mongodb["group_warns"]
 _settings = mongodb["group_mod_settings"]
 _blocklists = mongodb["group_blocklists"]
+_approved = mongodb["group_approved_users"]
 
 DEFAULT_SETTINGS = {
     "warn_limit": 3,
@@ -22,6 +23,7 @@ DEFAULT_SETTINGS = {
     "flood_mode": "mute",
     "flood_duration": "10m",
     "locks": [],
+    "antibio": "off",
 }
 
 
@@ -167,3 +169,39 @@ async def matching_blocklists(chat_id: int, text: str) -> list[dict[str, Any]]:
 
 async def set_locks(chat_id: int, locks: Iterable[str]) -> None:
     await update_settings(chat_id, {"locks": sorted(set(locks))})
+
+
+async def approve_user(chat_id: int, user_id: int, admin_id: int | None = None) -> None:
+    now = datetime.now(timezone.utc)
+    doc: dict[str, Any] = {
+        "chat_id": int(chat_id),
+        "user_id": int(user_id),
+        "updated_at": now,
+    }
+    if admin_id:
+        doc["approved_by"] = int(admin_id)
+    await _approved.update_one(
+        {"chat_id": int(chat_id), "user_id": int(user_id)},
+        {"$set": doc, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+
+
+async def unapprove_user(chat_id: int, user_id: int) -> bool:
+    result = await _approved.delete_one({"chat_id": int(chat_id), "user_id": int(user_id)})
+    return result.deleted_count > 0
+
+
+async def is_approved(chat_id: int, user_id: int) -> bool:
+    doc = await _approved.find_one(
+        {"chat_id": int(chat_id), "user_id": int(user_id)},
+        {"_id": 1},
+    )
+    return bool(doc)
+
+
+async def list_approved(chat_id: int) -> list[int]:
+    users: list[int] = []
+    async for doc in _approved.find({"chat_id": int(chat_id)}, {"user_id": 1}).sort("user_id", 1):
+        users.append(int(doc["user_id"]))
+    return users

@@ -28,6 +28,8 @@ BOT_COMMANDS = [
     BotCommand("autoplay", "Toggle similar-song autoplay"),
     BotCommand("autodelete", "Auto-delete player and queue notices"),
     BotCommand("antinsfw", "Toggle NSFW media auto-delete"),
+    BotCommand("antibio", "Delete messages from users with bio links"),
+    BotCommand("approve", "Bypass guard checks for a user"),
     BotCommand("rules", "Show group rules"),
     BotCommand("warn", "Warn a group member"),
     BotCommand("report", "Report a replied message"),

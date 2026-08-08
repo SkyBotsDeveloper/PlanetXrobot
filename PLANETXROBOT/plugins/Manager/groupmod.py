@@ -1,10 +1,11 @@
+import asyncio
 import re
 import time
 from collections import defaultdict, deque
 from typing import Any
 
-from pyrogram import enums, filters
-from pyrogram.errors import ChatAdminRequired, RPCError, UserAdminInvalid
+from pyrogram import StopPropagation, enums, filters
+from pyrogram.errors import ChatAdminRequired, FloodWait, RPCError, UserAdminInvalid
 from pyrogram.types import ChatPermissions, Message
 
 from config import BANNED_USERS
@@ -13,14 +14,17 @@ from PLANETXROBOT.logging import LOGGER
 from PLANETXROBOT.mongo.groupmoddb import (
     add_blocklist,
     add_warn,
+    approve_user,
     clear_blocklist,
     delete_note,
     get_note,
     get_rules,
     get_settings,
     get_warns,
+    is_approved,
     list_blocklist,
     list_notes,
+    list_approved,
     matching_blocklists,
     remove_blocklist,
     remove_warn,
@@ -29,6 +33,7 @@ from PLANETXROBOT.mongo.groupmoddb import (
     save_note,
     set_locks,
     set_rules,
+    unapprove_user,
     update_settings,
 )
 from PLANETXROBOT.utils.decorator import admin_required
@@ -38,6 +43,10 @@ logger = LOGGER(__name__)
 
 _MUTE_PERMS = ChatPermissions()
 _FLOOD_BUCKETS: dict[tuple[int, int], deque[float]] = defaultdict(deque)
+_BIO_CLEAN_CACHE: dict[int, float] = {}
+_BIO_FETCH_LOCKS: dict[int, asyncio.Lock] = {}
+_BIO_FETCH_SEMAPHORE = asyncio.Semaphore(6)
+_BIO_CLEAN_CACHE_SECONDS = 8
 
 LOCK_TYPES = {
     "all",
@@ -63,6 +72,20 @@ WARN_ACTION_MODES = {"ban", "kick", "mute"}
 URL_RE = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/|telegram\.dog/)", re.I)
 INVITE_RE = re.compile(r"(t\.me/(joinchat/|\+)|telegram\.(me|dog)/(joinchat/|\+))", re.I)
 NOTE_RE = re.compile(r"^#([A-Za-z0-9_-]{1,64})(?:\s|$)")
+BIO_LINK_RE = re.compile(
+    r"(?i)(?:"
+    r"@[a-zA-Z0-9_][a-zA-Z0-9_]{3,31}|"
+    r"t\.me/[a-zA-Z0-9_./\-]+|"
+    r"telegram\.me/[a-zA-Z0-9_./\-]+|"
+    r"tg\.me/[a-zA-Z0-9_./\-]+|"
+    r"https?://[^\s]+|"
+    r"www\.[a-zA-Z0-9.\-]+(?:[/?#][^\s]*)?|"
+    r"(?:bit\.ly|ow\.ly|tinyurl\.com|short\.link|goo\.gl|is\.gd)/[a-zA-Z0-9.\-_]+|"
+    r"(?:instagram|tiktok|twitter|facebook|youtube|linkedin)\.com/[a-zA-Z0-9.\-_~:/?#@!$&'()*+,;=%]+|"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
+    r"(?:com|org|net|io|co|uk|app|dev|shop)(?:[/?#][^\s]*)?"
+    r")"
+)
 
 
 @app.on_message(filters.command("rules") & filters.group & ~BANNED_USERS)
@@ -420,6 +443,94 @@ async def clearflood_cmd(_, message: Message):
     await message.reply_text("Antiflood counters cleared for this chat.")
 
 
+@app.on_message(filters.command("antibio") & filters.group & ~BANNED_USERS)
+@admin_required("can_delete_messages")
+async def antibio_cmd(_, message: Message):
+    settings = await get_settings(message.chat.id)
+    if len(message.command) != 2 or message.command[1].lower() not in {"on", "off", "status"}:
+        state = str(settings.get("antibio", "off")).lower()
+        return await message.reply_text(f"Anti-bio is currently {state}. Usage: /antibio on|off")
+
+    action = message.command[1].lower()
+    if action == "status":
+        state = str(settings.get("antibio", "off")).lower()
+        return await message.reply_text(f"Anti-bio is currently {state}.")
+
+    await update_settings(message.chat.id, {"antibio": action})
+    if action == "on":
+        text = (
+            "Anti-bio enabled. Non-admin, non-approved users with links in their bio "
+            "will have messages deleted until the bio is clean."
+        )
+    else:
+        text = "Anti-bio disabled."
+    await message.reply_text(text)
+
+
+@app.on_message(filters.command("approve") & filters.group & ~BANNED_USERS)
+@admin_required("can_restrict_members")
+async def approve_cmd(client, message: Message):
+    uid, name = await _target_user(client, message)
+    if not uid:
+        return await message.reply_text("Usage: /approve @user or reply with /approve")
+    await approve_user(message.chat.id, uid, message.from_user.id if message.from_user else None)
+    _FLOOD_BUCKETS.pop((message.chat.id, uid), None)
+    _BIO_CLEAN_CACHE.pop(uid, None)
+    await message.reply_text(
+        f"{mention(uid, name or str(uid))} approved. This user now bypasses locks, blocklists, flood and anti-bio."
+    )
+
+
+@app.on_message(filters.command(["unapprove", "disapprove"]) & filters.group & ~BANNED_USERS)
+@admin_required("can_restrict_members")
+async def unapprove_cmd(client, message: Message):
+    uid, name = await _target_user(client, message)
+    if not uid:
+        return await message.reply_text("Usage: /unapprove @user or reply with /unapprove")
+    removed = await unapprove_user(message.chat.id, uid)
+    _BIO_CLEAN_CACHE.pop(uid, None)
+    await message.reply_text(
+        f"{mention(uid, name or str(uid))} unapproved." if removed else "That user is not approved."
+    )
+
+
+@app.on_message(filters.command(["approved", "approvedlist"]) & filters.group & ~BANNED_USERS)
+async def approved_cmd(client, message: Message):
+    users = await list_approved(message.chat.id)
+    if not users:
+        return await message.reply_text("No approved users in this chat.")
+
+    lines = ["**Approved users:**"]
+    for index, user_id in enumerate(users[:80], start=1):
+        try:
+            user = await client.get_users(user_id)
+            name = user.first_name or str(user_id)
+        except RPCError:
+            name = str(user_id)
+        lines.append(f"{index}. {mention(user_id, name)} (`{user_id}`)")
+    if len(users) > 80:
+        lines.append(f"...and {len(users) - 80} more.")
+    await message.reply_text("\n".join(lines), disable_web_page_preview=True)
+
+
+@app.on_message(filters.group & ~BANNED_USERS, group=-90)
+async def antibio_guard_watcher(client, message: Message):
+    if not message.from_user:
+        return
+    if await _is_admin(client, message.chat.id, message.from_user.id):
+        return
+    if await is_approved(message.chat.id, message.from_user.id):
+        return
+
+    settings = await get_settings(message.chat.id)
+    if str(settings.get("antibio", "off")).lower() != "on":
+        return
+
+    if await _user_has_bio_link(client, message.from_user.id):
+        await _delete_message(message)
+        raise StopPropagation
+
+
 @app.on_message(filters.group & ~BANNED_USERS, group=10)
 async def group_moderation_watcher(client, message: Message):
     if not message.from_user:
@@ -430,6 +541,9 @@ async def group_moderation_watcher(client, message: Message):
         await _send_note(message, note_match.group(1).lower())
 
     if await _is_admin(client, message.chat.id, message.from_user.id):
+        return
+
+    if await is_approved(message.chat.id, message.from_user.id):
         return
 
     settings = await get_settings(message.chat.id)
@@ -459,6 +573,74 @@ def _command_payload(message: Message) -> str:
 
 def _message_text(message: Message) -> str:
     return message.text or message.caption or ""
+
+
+def _flood_wait_seconds(exc: FloodWait) -> int:
+    return int(getattr(exc, "value", getattr(exc, "x", 0)) or 0)
+
+
+def _bio_fetch_lock(user_id: int) -> asyncio.Lock:
+    lock = _BIO_FETCH_LOCKS.get(user_id)
+    if lock is not None:
+        return lock
+
+    if len(_BIO_FETCH_LOCKS) > 5000:
+        for cached_user_id, cached_lock in list(_BIO_FETCH_LOCKS.items()):
+            if not cached_lock.locked():
+                _BIO_FETCH_LOCKS.pop(cached_user_id, None)
+            if len(_BIO_FETCH_LOCKS) <= 4500:
+                break
+
+    lock = asyncio.Lock()
+    _BIO_FETCH_LOCKS[user_id] = lock
+    return lock
+
+
+async def _fetch_user_bio(client, user_id: int) -> str | None:
+    for attempt in range(2):
+        try:
+            async with _BIO_FETCH_SEMAPHORE:
+                chat = await client.get_chat(user_id)
+            return getattr(chat, "bio", None) or ""
+        except FloodWait as exc:
+            wait_for = _flood_wait_seconds(exc)
+            if wait_for <= 20 and attempt == 0:
+                await asyncio.sleep(wait_for + 1)
+                continue
+            logger.warning("Skipping bio check for user=%s after FloodWait=%ss", user_id, wait_for)
+            return None
+        except RPCError as exc:
+            logger.warning("Unable to fetch bio for user=%s: %s", user_id, exc)
+            return None
+    return None
+
+
+async def _user_has_bio_link(client, user_id: int) -> bool:
+    now = time.monotonic()
+    clean_until = _BIO_CLEAN_CACHE.get(user_id)
+    if clean_until and clean_until > now:
+        return False
+    if clean_until:
+        _BIO_CLEAN_CACHE.pop(user_id, None)
+
+    async with _bio_fetch_lock(user_id):
+        now = time.monotonic()
+        clean_until = _BIO_CLEAN_CACHE.get(user_id)
+        if clean_until and clean_until > now:
+            return False
+        if clean_until:
+            _BIO_CLEAN_CACHE.pop(user_id, None)
+
+        bio = await _fetch_user_bio(client, user_id)
+        if bio is None:
+            return False
+
+        if BIO_LINK_RE.search(bio):
+            _BIO_CLEAN_CACHE.pop(user_id, None)
+            return True
+
+        _BIO_CLEAN_CACHE[user_id] = time.monotonic() + _BIO_CLEAN_CACHE_SECONDS
+        return False
 
 
 def _build_note(message: Message, name: str) -> dict[str, Any] | None:

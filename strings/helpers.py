@@ -388,5 +388,11 @@ HELP_35 = """
 - /setfloodmode [ban|kick|mute] [duration].
 - /clearflood - reset flood counters.
 
+<b>Approvals & Bio Links</b>
+- /approve [reply/@user/id] - let a user bypass locks, blocklists, flood and anti-bio.
+- /unapprove [reply/@user/id] - remove the bypass.
+- /approved - list approved users.
+- /antibio on|off|status - delete messages from users whose bio contains a link.
+
 Durations support s/m/h/d/w, for example 30m or 1w.
 """
