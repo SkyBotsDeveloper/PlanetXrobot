@@ -3,10 +3,9 @@ aiohttp
 apscheduler
 bing_image_downloader
 bs4
-deepai
 edge-tts
 gitpython
-gradio_client==2.5.0
+gradio_client==2.6.0
 gpytranslate
 gtts
 heroku3
@@ -15,7 +14,7 @@ indic-transliteration
 kurigram==2.2.24
 motor
 nekosbest
-numpy
+numpy==2.5.1
 opencv-python
 pillow==12.3.0
 psutil
