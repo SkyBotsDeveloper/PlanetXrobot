@@ -208,8 +208,8 @@ OCR_SPACE_API_KEY=helloworld  # Optional - OCR.Space key; shared free demo key w
 
 ### Step 1: Update & Install Packages
 sudo apt update && sudo apt upgrade -y
-sudo apt install git curl python3-pip python3-venv ffmpeg -y
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install git curl ca-certificates gnupg python3-pip python3-venv ffmpeg -y
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 npm install -g npm
 
