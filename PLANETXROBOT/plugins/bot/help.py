@@ -19,6 +19,55 @@ from config import BANNED_USERS, HELP_IMG_URL, SUPPORT_CHAT
 from strings import get_string, helpers
 
 
+MEDIA_CAPTION_LIMIT = 1024
+
+
+def _has_media(message: Message) -> bool:
+    return bool(getattr(message, "media", None))
+
+
+async def _show_help_text(
+    client: Client,
+    callback_query: types.CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+):
+    message = callback_query.message
+    if _has_media(message) and len(text) > MEDIA_CAPTION_LIMIT:
+        await callback_query.answer()
+        chat_id = message.chat.id
+        await message.delete()
+        await client.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
+        return
+
+    await callback_query.edit_message_text(
+        text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=True,
+    )
+
+
+async def _show_start_panel(
+    callback_query: types.CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+):
+    if _has_media(callback_query.message):
+        await callback_query.edit_message_caption(text, reply_markup=reply_markup)
+        return
+
+    await callback_query.edit_message_text(
+        text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=True,
+    )
+
+
 @app.on_message(filters.command(["help"]) & filters.private & ~BANNED_USERS)
 @app.on_callback_query(filters.regex("open_help") & ~BANNED_USERS)
 @LanguageStart
@@ -36,7 +85,14 @@ async def helper_private(
 
     if is_cb:
         await update.answer()
-        await update.message.edit_caption(caption, reply_markup=keyboard)
+        if _has_media(update.message):
+            await update.message.edit_caption(caption, reply_markup=keyboard)
+        else:
+            await update.message.edit_text(
+                caption,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
         return
 
     await update.delete()
@@ -69,10 +125,11 @@ async def helper_cb(client: Client, callback_query: types.CallbackQuery, _):
     current_page = int(match.group(2))
 
     if number == 1:
-        await callback_query.edit_message_text(
+        await _show_help_text(
+            client,
+            callback_query,
             _["S_B_M"],
             reply_markup=action_sub_menu(_, current_page),
-            disable_web_page_preview=True,
         )
         return
 
@@ -80,10 +137,11 @@ async def helper_cb(client: Client, callback_query: types.CallbackQuery, _):
     if not help_text:
         return await callback_query.answer("Invalid help topic.", show_alert=True)
 
-    await callback_query.edit_message_text(
+    await _show_help_text(
+        client,
+        callback_query,
         help_text,
         reply_markup=help_back_markup(_, current_page),
-        disable_web_page_preview=True,
     )
 
 
@@ -134,20 +192,22 @@ async def help_back_cb(client: Client, callback_query: types.CallbackQuery, _):
 @app.on_callback_query(filters.regex("action_prom_1") & ~BANNED_USERS)
 @languageCB
 async def action_prom_cb(client: Client, callback_query: types.CallbackQuery, _):
-    await callback_query.edit_message_text(
+    await _show_help_text(
+        client,
+        callback_query,
         helpers.HELP_1_PROMO,
         reply_markup=help_back_markup(_, 1),
-        disable_web_page_preview=True,
     )
 
 
 @app.on_callback_query(filters.regex("action_pun_1") & ~BANNED_USERS)
 @languageCB
 async def action_pun_cb(client: Client, callback_query: types.CallbackQuery, _):
-    await callback_query.edit_message_text(
+    await _show_help_text(
+        client,
+        callback_query,
         helpers.HELP_1_PUNISH,
         reply_markup=help_back_markup(_, 1),
-        disable_web_page_preview=True,
     )
 
 
@@ -155,7 +215,8 @@ async def action_pun_cb(client: Client, callback_query: types.CallbackQuery, _):
 @languageCB
 async def back_to_main_cb(client: Client, callback_query: types.CallbackQuery, _):
     out = private_panel(_)
-    await callback_query.edit_message_caption(
+    await _show_start_panel(
+        callback_query,
         _["start_2"].format(callback_query.from_user.mention, app.mention),
         reply_markup=InlineKeyboardMarkup(out),
     )
