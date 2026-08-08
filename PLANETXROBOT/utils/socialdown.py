@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
+import mimetypes
 import os
 import re
 import shutil
 import tempfile
 import time
-import mimetypes
 from dataclasses import dataclass
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 from yt_dlp import YoutubeDL
@@ -39,6 +42,24 @@ VXTWITTER_API_URL = "https://api.vxtwitter.com"
 TIKWM_API_URL = "https://www.tikwm.com/api/"
 X_OEMBED_URL = "https://publish.twitter.com/oembed"
 YOUTUBE_OEMBED_URL = "https://www.youtube.com/oembed"
+SNAPINTA_HOME_URL = "https://snapinta.app/en"
+SNAPINTA_PAGE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/127.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+SNAPINTA_AJAX_HEADERS = {
+    **SNAPINTA_PAGE_HEADERS,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin": "https://snapinta.app",
+    "Referer": SNAPINTA_HOME_URL,
+    "X-Requested-With": "XMLHttpRequest",
+}
 
 INSTAGRAM_HOSTS = {
     "instagram.com",
@@ -103,6 +124,10 @@ META_TAG_PATTERN = re.compile(
 )
 TITLE_TAG_PATTERN = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 URL_TEXT_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
+SNAPINTA_VAR_PATTERN = re.compile(
+    r"\b(k_url_search|k_exp|k_token)\s*=\s*['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 HTML_MEDIA_META_KEYS = (
     ("og:video:secure_url", "video"),
     ("og:video:url", "video"),
@@ -181,6 +206,43 @@ def _clean_html_text(value: str | None) -> str:
 
 def _strip_urls_from_text(value: str | None) -> str:
     return _clean_text(URL_TEXT_PATTERN.sub("", str(value or "")))
+
+
+class _AnchorLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links: list[dict[str, str]] = []
+        self._anchor_stack: list[dict[str, object]] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        if tag.lower() != "a":
+            return
+        attr_map = {str(key).lower(): str(value or "") for key, value in attrs}
+        self._anchor_stack.append(
+            {
+                "href": attr_map.get("href", ""),
+                "title": attr_map.get("title", ""),
+                "class": attr_map.get("class", ""),
+                "text_parts": [],
+            }
+        )
+
+    def handle_data(self, data: str):
+        if self._anchor_stack:
+            self._anchor_stack[-1]["text_parts"].append(data)
+
+    def handle_endtag(self, tag: str):
+        if tag.lower() != "a" or not self._anchor_stack:
+            return
+        anchor = self._anchor_stack.pop()
+        self.links.append(
+            {
+                "href": str(anchor.get("href") or ""),
+                "title": _clean_text(anchor.get("title")),
+                "class": _clean_text(anchor.get("class")),
+                "text": _clean_text(" ".join(anchor.get("text_parts") or [])),
+            }
+        )
 
 
 def _guess_kind(filename: str, content_type: str) -> str:
@@ -432,39 +494,226 @@ async def _build_youtube_oembed_note(client: httpx.AsyncClient, source_url: str)
     return "\n".join(lines).strip()
 
 
-def _pick_ytdlp_entry(info) -> dict:
+def _extract_snapinta_config(html: str) -> tuple[str, str, str]:
+    values = {
+        key.lower(): unescape(value)
+        for key, value in SNAPINTA_VAR_PATTERN.findall(str(html or "")[:350000])
+    }
+    token = _clean_text(values.get("k_token"))
+    expiry = _clean_text(values.get("k_exp"))
+    search_path = _clean_text(values.get("k_url_search")) or "/api/ajaxSearch"
+    if not token or not expiry:
+        raise SocialDownloadError("Snapinta session token was not found.")
+    return urljoin(SNAPINTA_HOME_URL, search_path), token, expiry
+
+
+def _decode_snapinta_filename(media_url: str) -> str:
+    token = (parse_qs(urlparse(media_url).query).get("token") or [""])[0]
+    parts = token.split(".")
+    if len(parts) < 2:
+        return ""
+
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
+        data = json.loads(decoded.decode("utf-8", "replace"))
+    except Exception:
+        return ""
+
+    return _safe_filename(data.get("filename"), "")
+
+
+def _snapinta_kind_from_link(link: dict[str, str], filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    if suffix in PHOTO_EXTENSIONS:
+        return "photo"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
+
+    text = " ".join(
+        [
+            link.get("title", ""),
+            link.get("text", ""),
+            link.get("class", ""),
+            filename,
+        ]
+    ).lower()
+    if "video" in text:
+        return "video"
+    if "image" in text or "photo" in text:
+        return "photo"
+    if "audio" in text or "music" in text:
+        return "audio"
+    return _guess_kind(filename, "")
+
+
+def _build_snapinta_bundle(source_url: str, response_html: str) -> SocialDownloadBundle:
+    parser = _AnchorLinkParser()
+    parser.feed(str(response_html or ""))
+
+    items: list[SocialMediaItem] = []
+    seen_urls: set[str] = set()
+    for link in parser.links:
+        href = _clean_text(link.get("href"))
+        label = " ".join(
+            [
+                link.get("title", ""),
+                link.get("text", ""),
+                link.get("class", ""),
+            ]
+        ).lower()
+        if not href or "download" not in label:
+            continue
+
+        media_url = urljoin(SNAPINTA_HOME_URL, href)
+        parsed = urlparse(media_url)
+        if parsed.netloc.lower().endswith("snapinta.app") and parsed.path in {"", "/", "/en"}:
+            continue
+        try:
+            safe_url = validate_public_http_url(media_url, allow_subdomains=True)
+        except Exception:
+            continue
+        if safe_url in seen_urls:
+            continue
+
+        filename = _decode_snapinta_filename(safe_url)
+        if not filename:
+            fallback = "instagram_video.mp4" if "video" in label else "instagram_media"
+            filename = _safe_filename(fallback, "instagram_media")
+        kind = _snapinta_kind_from_link(link, filename)
+        if kind not in {"video", "photo", "audio"}:
+            continue
+
+        seen_urls.add(safe_url)
+        items.append(SocialMediaItem(url=safe_url, kind=kind, filename_hint=filename))
+        if len(items) >= MAX_MEDIA_FILES:
+            break
+
+    if _is_instagram_video_url(source_url):
+        video_items = [item for item in items if item.kind == "video"]
+        if video_items:
+            items = video_items
+
+    if not items:
+        raise SocialDownloadError("Snapinta returned no downloadable Instagram media.")
+
+    title = "Instagram Reel" if _is_instagram_video_url(source_url) else "Instagram Media"
+    return SocialDownloadBundle(
+        title=title,
+        source="Snapinta",
+        items=items[:MAX_MEDIA_FILES],
+    )
+
+
+async def _fetch_instagram_via_snapinta(
+    client: httpx.AsyncClient,
+    source_url: str,
+) -> SocialDownloadBundle:
+    page_response = await client.get(
+        SNAPINTA_HOME_URL,
+        timeout=API_TIMEOUT,
+        headers=SNAPINTA_PAGE_HEADERS,
+    )
+    page_response.raise_for_status()
+    search_url, token, expiry = _extract_snapinta_config(page_response.text)
+
+    payload = await _request_json(
+        client,
+        "POST",
+        search_url,
+        timeout=API_TIMEOUT,
+        headers=SNAPINTA_AJAX_HEADERS,
+        data={
+            "k_exp": expiry,
+            "k_token": token,
+            "q": source_url,
+            "t": "media",
+            "lang": "en",
+            "v": "v2",
+            "html": "",
+        },
+    )
+    if not isinstance(payload, dict):
+        raise SocialDownloadError("Snapinta returned an invalid response.")
+    if str(payload.get("status") or "").lower() != "ok":
+        message = payload.get("mess") or payload.get("msg") or "Snapinta lookup failed."
+        raise SocialDownloadError(_clean_html_text(message))
+
+    response_html = payload.get("data")
+    if not isinstance(response_html, str) or not response_html.strip():
+        raise SocialDownloadError("Snapinta returned no download page.")
+
+    return _build_snapinta_bundle(source_url, response_html)
+
+
+def _pick_ytdlp_entries(info) -> list[dict]:
     if not isinstance(info, dict):
         raise SocialDownloadError("yt-dlp returned an unexpected response.")
     entries = info.get("entries")
     if isinstance(entries, list) and entries:
+        picked = []
         for entry in entries:
             if isinstance(entry, dict):
-                return entry
-    return info
+                picked.append(entry)
+        if picked:
+            return picked[:MAX_MEDIA_FILES]
+    return [info]
+
+
+def _ytdlp_item_kind(item: dict) -> str:
+    ext = str(item.get("ext") or "").strip().lower()
+    suffix = f".{ext}" if ext else ""
+    vcodec = str(item.get("vcodec") or "").lower()
+    acodec = str(item.get("acodec") or "").lower()
+
+    if vcodec and vcodec != "none":
+        return "video"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    if acodec and acodec != "none":
+        return "audio"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
+    if suffix in PHOTO_EXTENSIONS:
+        return "photo"
+    return ""
+
+
+def _is_instagram_video_url(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return "/reel/" in path or "/tv/" in path
+
+
+def _is_ytdlp_direct_media(item: dict) -> bool:
+    media_url = str(item.get("url") or "").strip()
+    protocol = str(item.get("protocol") or "").lower()
+    size = int(item.get("filesize") or item.get("filesize_approx") or 0)
+    if not media_url.startswith(("http://", "https://")):
+        return False
+    if "m3u8" in protocol:
+        return False
+    if size and size > MAX_DOWNLOAD_BYTES:
+        return False
+    return bool(_ytdlp_item_kind(item))
 
 
 def _pick_ytdlp_format(entry: dict) -> dict:
-    direct_url = str(entry.get("url") or "").strip()
-    protocol = str(entry.get("protocol") or "").lower()
-    if direct_url.startswith(("http://", "https://")) and "m3u8" not in protocol:
-        return entry
-
     formats = entry.get("formats") or []
-    for item in reversed(formats):
-        if not isinstance(item, dict):
-            continue
-        media_url = str(item.get("url") or "").strip()
-        protocol = str(item.get("protocol") or "").lower()
-        ext = str(item.get("ext") or "").lower()
-        size = int(item.get("filesize") or item.get("filesize_approx") or 0)
-        if not media_url.startswith(("http://", "https://")):
-            continue
-        if "m3u8" in protocol:
-            continue
-        if size and size > MAX_DOWNLOAD_BYTES:
-            continue
-        if ext in {"mp4", "webm", "m4a", "mp3", "jpg", "jpeg", "png", "webp"}:
-            return item
+    direct_formats = [
+        item
+        for item in formats
+        if isinstance(item, dict) and _is_ytdlp_direct_media(item)
+    ]
+    for preferred_kind in ("video", "audio", "photo"):
+        for item in reversed(direct_formats):
+            if _ytdlp_item_kind(item) == preferred_kind:
+                return item
+
+    if _is_ytdlp_direct_media(entry):
+        return entry
 
     raise SocialDownloadError("yt-dlp returned no direct downloadable media URL.")
 
@@ -474,50 +723,66 @@ def _extract_ytdlp_bundle(source_url: str, platform: str) -> SocialDownloadBundl
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "noplaylist": True,
+        "noplaylist": platform != "instagram",
         "socket_timeout": 18,
         "format": "best[filesize<90M]/best[filesize_approx<90M]/best",
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(source_url, download=False)
 
-    entry = _pick_ytdlp_entry(info)
-    selected = _pick_ytdlp_format(entry)
-    media_url = str(selected.get("url") or "").strip()
-    title = _safe_filename(
-        entry.get("title") or selected.get("format_id") or f"{platform.title()} Media",
+    entries = _pick_ytdlp_entries(info)
+    bundle_title = _safe_filename(
+        info.get("title") or f"{platform.title()} Media",
         f"{platform.title()} Media",
     )
-    ext = str(selected.get("ext") or entry.get("ext") or "").strip().lower()
-    filename = _safe_filename(
-        entry.get("filename")
-        or entry.get("_filename")
-        or f"{title}.{ext or 'mp4'}",
-        f"{title}.{ext or 'mp4'}",
-    )
-    if ext and not Path(filename).suffix:
-        filename = f"{filename}.{ext}"
-
-    kind = _guess_kind(filename, "")
-    if kind == "document":
-        vcodec = str(selected.get("vcodec") or entry.get("vcodec") or "")
-        acodec = str(selected.get("acodec") or entry.get("acodec") or "")
-        if vcodec and vcodec != "none":
-            kind = "video"
-        elif acodec and acodec != "none":
-            kind = "audio"
-
     note_parts = []
-    uploader = _clean_text(entry.get("uploader") or entry.get("channel"))
-    if title:
-        note_parts.append(f"Title: {title}")
+    uploader = _clean_text(info.get("uploader") or info.get("channel"))
+    if bundle_title:
+        note_parts.append(f"Title: {bundle_title}")
     if uploader:
         note_parts.append(f"Author: {uploader}")
 
+    items: list[SocialMediaItem] = []
+    seen_urls: set[str] = set()
+    entry_errors: list[str] = []
+    for index, entry in enumerate(entries, start=1):
+        try:
+            selected = _pick_ytdlp_format(entry)
+        except SocialDownloadError as exc:
+            entry_errors.append(str(exc))
+            continue
+        media_url = str(selected.get("url") or "").strip()
+        if not media_url or media_url in seen_urls:
+            continue
+        seen_urls.add(media_url)
+
+        title = _safe_filename(
+            entry.get("title") or bundle_title or selected.get("format_id") or f"{platform.title()} Media",
+            f"{platform.title()} Media",
+        )
+        ext = str(selected.get("ext") or entry.get("ext") or "").strip().lower()
+        filename = _safe_filename(
+            entry.get("filename")
+            or entry.get("_filename")
+            or f"{title}_{index}.{ext or 'mp4'}",
+            f"{title}_{index}.{ext or 'mp4'}",
+        )
+        if ext and not Path(filename).suffix:
+            filename = f"{filename}.{ext}"
+
+        kind = _ytdlp_item_kind(selected) or _guess_kind(filename, "")
+        if kind == "document":
+            kind = _guess_kind(filename, "")
+        items.append(SocialMediaItem(url=media_url, kind=kind, filename_hint=filename))
+
+    if not items:
+        detail = f" {'; '.join(entry_errors[:2])}" if entry_errors else ""
+        raise SocialDownloadError(f"yt-dlp returned no downloadable media items.{detail}")
+
     return SocialDownloadBundle(
-        title=title,
+        title=bundle_title,
         source="yt-dlp",
-        items=[SocialMediaItem(url=media_url, kind=kind, filename_hint=filename)],
+        items=items[:MAX_MEDIA_FILES],
         note_text="\n".join(note_parts),
     )
 
@@ -945,6 +1210,14 @@ async def get_social_bundle(platform: str, url: str) -> SocialDownloadBundle:
             strategies.append(
                 ("TikWM", "tiktok:tikwm", lambda: _fetch_tiktok_via_tikwm(client, safe_url))
             )
+        elif platform == "instagram":
+            strategies.append(
+                (
+                    "Snapinta",
+                    "instagram:snapinta",
+                    lambda: _fetch_instagram_via_snapinta(client, safe_url),
+                )
+            )
 
         strategies.append(
             (
@@ -959,6 +1232,12 @@ async def get_social_bundle(platform: str, url: str) -> SocialDownloadBundle:
                 continue
             try:
                 bundle = await runner()
+                if (
+                    platform == "instagram"
+                    and _is_instagram_video_url(safe_url)
+                    and not any(item.kind == "video" for item in bundle.items)
+                ):
+                    raise SocialDownloadError("Instagram returned only the preview image for this reel.")
                 if platform == "youtube":
                     bundle = _append_note(bundle, await _build_youtube_oembed_note(client, safe_url))
                 elif platform != "x":
@@ -970,21 +1249,28 @@ async def get_social_bundle(platform: str, url: str) -> SocialDownloadBundle:
 
         metadata_bundle = await _build_page_metadata_bundle(client, safe_url, platform)
         if metadata_bundle:
-            if not metadata_bundle.items and metadata_bundle.note_text:
-                return SocialDownloadBundle(
-                    title=metadata_bundle.title,
-                    source=metadata_bundle.source,
-                    items=[
-                        SocialMediaItem(
-                            url="",
-                            kind="text",
-                            filename_hint=f"{metadata_bundle.title}.txt",
-                            content=metadata_bundle.note_text,
-                        )
-                    ],
-                    note_text=metadata_bundle.note_text,
-                )
-            return metadata_bundle
+            if (
+                platform == "instagram"
+                and _is_instagram_video_url(safe_url)
+                and not any(item.kind == "video" for item in metadata_bundle.items)
+            ):
+                failures.append("Page Metadata: only the preview image was available for this reel")
+            else:
+                if not metadata_bundle.items and metadata_bundle.note_text:
+                    return SocialDownloadBundle(
+                        title=metadata_bundle.title,
+                        source=metadata_bundle.source,
+                        items=[
+                            SocialMediaItem(
+                                url="",
+                                kind="text",
+                                filename_hint=f"{metadata_bundle.title}.txt",
+                                content=metadata_bundle.note_text,
+                            )
+                        ],
+                        note_text=metadata_bundle.note_text,
+                    )
+                return metadata_bundle
 
     details = "\n".join(failures[:3])
     raise SocialDownloadError(
