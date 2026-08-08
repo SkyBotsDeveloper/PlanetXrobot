@@ -71,6 +71,36 @@
       "required": false,
       "value": "itsmesid"
     },
+    "NSFW_MODEL_NAME": {
+      "description": "(Optional) Hugging Face image-classification model used by /antinsfw.",
+      "required": false,
+      "value": "Falconsai/nsfw_image_detection"
+    },
+    "NSFW_THRESHOLD": {
+      "description": "(Optional) Local model NSFW confidence threshold.",
+      "required": false,
+      "value": "0.85"
+    },
+    "NSFW_FALLBACK_ENABLED": {
+      "description": "(Optional) Enable online fallback when local NSFW detection is uncertain. Hugging Face fallback requires HF_TOKEN.",
+      "required": false,
+      "value": "1"
+    },
+    "NSFW_FALLBACK_PROVIDER": {
+      "description": "(Optional) Online fallback provider. Use huggingface with HF_TOKEN, or naas with a custom NSFW_FALLBACK_URL.",
+      "required": false,
+      "value": "huggingface"
+    },
+    "NSFW_FALLBACK_URL": {
+      "description": "(Optional) Custom online NSFW fallback endpoint. Leave blank for Hugging Face router.",
+      "required": false,
+      "value": ""
+    },
+    "HF_TOKEN": {
+      "description": "(Optional) Hugging Face token used by AI features and Anti-NSFW online fallback.",
+      "required": false,
+      "value": ""
+    },
     "HEROKU_API_KEY": {
       "description": "Your Heroku account API key, required if you want the bot to support auto-updates or dynamic deployments.",
       "required": false,

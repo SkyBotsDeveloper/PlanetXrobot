@@ -345,3 +345,13 @@ HELP_33 = """
 - /post - copy a replied message to the configured dump/log chat.
 - /leaveall - dev-only command to make the assistant leave all chats.
 """
+
+HELP_34 = """
+<b><u>Anti-NSFW</u></b>
+
+- /antinsfw on - enable NSFW photo, sticker, GIF and video auto-delete in the group.
+- /antinsfw off - disable Anti-NSFW moderation.
+- /antinsfw status - show whether Anti-NSFW is enabled.
+
+Needs bot admin permission to delete messages.
+"""

@@ -6,6 +6,13 @@ from pyrogram import filters
 # Load environment variables from .env file
 load_dotenv()
 
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on", "enable", "enabled"}
+
 # ── Core bot config ────────────────────────────────────────────────────────────
 API_ID = int(getenv("API_ID", 27798659))
 API_HASH = getenv("API_HASH", "26100c77cee02e5e34b2bbee58440f86")
@@ -47,6 +54,26 @@ WORKER_API_URL = getenv(
     "https://youtubenewapi.skybotsdeveloper.workers.dev",
 )
 WORKER_API_KEY = getenv("WORKER_API_KEY", "itsmesid")
+
+# Anti-NSFW moderation
+NSFW_MODEL_NAME = getenv("NSFW_MODEL_NAME", "Falconsai/nsfw_image_detection")
+NSFW_THRESHOLD = float(getenv("NSFW_THRESHOLD", "0.85"))
+NSFW_TORCH_DEVICE = getenv("NSFW_TORCH_DEVICE", "auto").lower()
+NSFW_TORCH_NUM_THREADS = int(getenv("NSFW_TORCH_NUM_THREADS", "0"))
+NSFW_FALLBACK_ENABLED = _bool_env("NSFW_FALLBACK_ENABLED", bool(HF_TOKEN))
+NSFW_FALLBACK_PROVIDER = getenv("NSFW_FALLBACK_PROVIDER", "huggingface").lower()
+NSFW_FALLBACK_URL = getenv("NSFW_FALLBACK_URL", "")
+NSFW_FALLBACK_TIMEOUT = float(getenv("NSFW_FALLBACK_TIMEOUT", "20"))
+NSFW_FALLBACK_THRESHOLD = float(getenv("NSFW_FALLBACK_THRESHOLD", "0.85"))
+NSFW_FALLBACK_MIN_LOCAL_SCORE = float(getenv("NSFW_FALLBACK_MIN_LOCAL_SCORE", "0.35"))
+NSFW_MAX_IMAGE_SIZE_MB = int(getenv("NSFW_MAX_IMAGE_SIZE_MB", "12"))
+NSFW_MAX_VIDEO_SIZE_MB = int(getenv("NSFW_MAX_VIDEO_SIZE_MB", "80"))
+NSFW_MAX_VIDEO_FRAMES = int(getenv("NSFW_MAX_VIDEO_FRAMES", "8"))
+NSFW_VIDEO_FRAME_INTERVAL = float(getenv("NSFW_VIDEO_FRAME_INTERVAL", "4"))
+NSFW_DOWNLOAD_TIMEOUT = float(getenv("NSFW_DOWNLOAD_TIMEOUT", "45"))
+NSFW_PROCESSING_TIMEOUT = float(getenv("NSFW_PROCESSING_TIMEOUT", "60"))
+NSFW_SAFE_CACHE_TTL_SECONDS = int(getenv("NSFW_SAFE_CACHE_TTL_SECONDS", "86400"))
+NSFW_INFERENCE_CONCURRENCY = int(getenv("NSFW_INFERENCE_CONCURRENCY", "1"))
 
 # ── Hosting / deployment ───────────────────────────────────────────────────────
 HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")

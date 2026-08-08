@@ -27,6 +27,7 @@ BOT_COMMANDS = [
     BotCommand("player", "Open player controls"),
     BotCommand("autoplay", "Toggle similar-song autoplay"),
     BotCommand("autodelete", "Auto-delete player and queue notices"),
+    BotCommand("antinsfw", "Toggle NSFW media auto-delete"),
     BotCommand("vcnotify", "Toggle VC join notifications"),
     BotCommand("gpt", "Ask the AI assistant"),
     BotCommand("claude", "Ask Claude-style AI"),
