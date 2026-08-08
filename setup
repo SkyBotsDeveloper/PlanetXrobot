@@ -62,16 +62,58 @@ trap 'stty sane 2>/dev/null || true' EXIT
 
 LOG_DIR="$SCRIPT_DIR/logs"; mkdir -p "$LOG_DIR"
 APTLOG="$LOG_DIR/apt.log"; NODELOG="$LOG_DIR/node.log"; PYLOG="$LOG_DIR/pip.log"
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 
 need_sudo(){ info "Elevated permissions may be required."; sudo -v || { bad "sudo unavailable"; exit 1; }; }
 
 update_system(){ info "Updating package lists"; sudo DEBIAN_FRONTEND=noninteractive apt-get update -yq >>"$APTLOG" 2>&1 || true; local upg; upg="$(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"; if [ "${upg:-0}" -gt 0 ]; then read -r -p "  $(c cyan)Upgrade ${upg} packages? [y/N]$(c reset) " a || true; [[ "$a" =~ ^[Yy]$ ]] && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq >>"$APTLOG" 2>&1 || true; else good "System is up to date"; fi; }
 
-install_prereqs(){ info "Installing python3, pip, venv, curl, ffmpeg"; sudo apt-get install -yq python3 python3-pip python3-venv curl ffmpeg >>"$APTLOG" 2>&1 || true; if command -v ffmpeg >/dev/null 2>&1; then local maj; maj="$(ffmpeg -version 2>/dev/null | head -n1 | sed -E 's/.*version ([0-9]+).*/\1/')"; if [ -n "${maj:-}" ] && [ "$maj" -lt 4 ]; then warn "ffmpeg < 4 may not support live streams"; else good "ffmpeg version OK"; fi; fi }
+install_python_runtime(){
+  if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    return
+  fi
 
-install_node(){ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then info "Node.js present ($(node -v))"; return; fi; info "Installing Node.js LTS"; bash -lc 'curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -' >>"$NODELOG" 2>&1; sudo apt-get install -yq nodejs >>"$NODELOG" 2>&1; sudo npm i -g npm >>"$NODELOG" 2>&1 || true; }
+  sudo apt-get install -yq "$PYTHON_BIN" "${PYTHON_BIN}-venv" "${PYTHON_BIN}-dev" >>"$APTLOG" 2>&1 && return
 
-install_python(){ if [ ! -f requirements.txt ]; then warn "requirements.txt not found — skipping Python deps"; return; fi; python3 -m venv .venv >>"$PYLOG" 2>&1; . ./.venv/bin/activate; python -m pip install -U pip setuptools wheel >>"$PYLOG" 2>&1; pip install -Ur requirements.txt >>"$PYLOG" 2>&1; good "Python deps installed"; }
+  local os_id=""
+  [ -r /etc/os-release ] && os_id="$(. /etc/os-release; printf '%s' "${ID:-}")"
+  if [ "$PYTHON_BIN" = "python3.12" ] && [ "$os_id" = "ubuntu" ]; then
+    info "Adding deadsnakes PPA for Python 3.12"
+    sudo add-apt-repository ppa:deadsnakes/ppa -y >>"$APTLOG" 2>&1
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update -yq >>"$APTLOG" 2>&1
+    sudo apt-get install -yq python3.12 python3.12-venv python3.12-dev >>"$APTLOG" 2>&1
+  fi
+}
+
+install_prereqs(){
+  info "Installing Python 3.12, curl, ffmpeg"
+  sudo apt-get install -yq software-properties-common git curl ca-certificates gnupg ffmpeg build-essential >>"$APTLOG" 2>&1 || true
+  install_python_runtime
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    bad "Python 3.12 is required. Install it, then rerun setup."
+    exit 1
+  fi
+  if command -v ffmpeg >/dev/null 2>&1; then local maj; maj="$(ffmpeg -version 2>/dev/null | head -n1 | sed -E 's/.*version ([0-9]+).*/\1/')"; if [ -n "${maj:-}" ] && [ "$maj" -lt 4 ]; then warn "ffmpeg < 4 may not support live streams"; else good "ffmpeg version OK"; fi; fi
+}
+
+install_node(){ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then info "Node.js present ($(node -v))"; return; fi; info "Installing Node.js LTS"; bash -lc 'curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -' >>"$NODELOG" 2>&1; sudo apt-get install -yq nodejs >>"$NODELOG" 2>&1; sudo npm i -g npm >>"$NODELOG" 2>&1 || true; }
+
+install_python(){
+  if [ ! -f requirements.txt ]; then warn "requirements.txt not found — skipping Python deps"; return; fi
+  if [ -x "./venv/bin/python" ]; then
+    local version
+    version="$(./venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    if [ "$version" != "3.12" ]; then
+      warn "./venv uses Python ${version:-unknown}; recreating it with Python 3.12"
+      rm -rf ./venv
+    fi
+  fi
+  "$PYTHON_BIN" -m venv venv >>"$PYLOG" 2>&1
+  . ./venv/bin/activate
+  python -m pip install -U pip setuptools wheel >>"$PYLOG" 2>&1
+  pip install -Ur requirements.txt >>"$PYLOG" 2>&1
+  good "Python deps installed in ./venv"
+}
 
 # ------- Prompts -------
 prompt_req(){

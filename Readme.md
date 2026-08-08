@@ -208,7 +208,12 @@ OCR_SPACE_API_KEY=helloworld  # Optional - OCR.Space key; shared free demo key w
 
 ### Step 1: Update & Install Packages
 sudo apt update && sudo apt upgrade -y
-sudo apt install git curl ca-certificates gnupg python3-pip python3-venv ffmpeg -y
+sudo apt install software-properties-common git curl ca-certificates gnupg ffmpeg build-essential -y
+sudo apt install python3.12 python3.12-venv python3.12-dev -y || {
+  sudo add-apt-repository ppa:deadsnakes/ppa -y
+  sudo apt update
+  sudo apt install python3.12 python3.12-venv python3.12-dev -y
+}
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 npm install -g npm
@@ -219,9 +224,10 @@ cd PlanetXrobot
 tmux new -s Planetx
 
 ### Step 3: Setup & Run
-python3 -m venv venv
+rm -rf venv .venv
+python3.12 -m venv venv
 source venv/bin/activate
-pip install -U pip && pip install -r requirements.txt
+pip install -U pip setuptools wheel && pip install -r requirements.txt
 bash setup   # Fill environment variables
 bash start   # Start bot
 

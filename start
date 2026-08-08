@@ -3,4 +3,16 @@ set -e
 
 ulimit -n 65535 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 
+if [ -x "./venv/bin/python" ]; then
+  exec ./venv/bin/python -m PLANETXROBOT
+fi
+
+if [ -x "./.venv/bin/python" ]; then
+  exec ./.venv/bin/python -m PLANETXROBOT
+fi
+
+if command -v python3.12 >/dev/null 2>&1; then
+  exec python3.12 -m PLANETXROBOT
+fi
+
 exec python3 -m PLANETXROBOT
