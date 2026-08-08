@@ -1,0 +1,112 @@
+{
+  "name": "Planetx X MUSIC",
+  "description": "Planetx X MUSIC is a powerful and versatile Telegram Music Player Bot built with Python, utilizing Pyrogram and Py-Tgcalls libraries for high-quality group voice chat music streaming. This bot offers seamless playback, custom download server integration, and AI-enhanced features for a premium user experience.",
+  "logo": "https://files.catbox.moe/dh6tpz.png",
+  "keywords": [
+    "python3",
+    "telegram",
+    "music-bot",
+    "pyrogram",
+    "py-tgcalls",
+    "PlanetXrobot"
+  ],
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID, available at https://my.telegram.org. Required to connect the bot to Telegram servers.",
+      "required": true,
+      "value": ""
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash, available at https://my.telegram.org. Required alongside API ID.",
+      "required": true,
+      "value": ""
+    },
+    "BOT_TOKEN": {
+      "description": "Bot Token from BotFather after creating your Telegram bot.",
+      "required": true,
+      "value": ""
+    },
+    "MONGO_DB_URI": {
+      "description": "MongoDB database connection URI, used for storing user and bot-related data. Get it from https://cloud.mongodb.com.",
+      "required": true,
+      "value": ""
+    },
+    "OWNER_ID": {
+      "description": "Your Telegram numeric user ID (use @userinfobot to find it). Multiple IDs can be separated by a space.",
+      "required": true,
+      "value": ""
+    },
+    "STRING_SESSION": {
+      "description": "Pyrogram v2 session string. Generate it securely from https://telegram.tools/session-string-generator#pyrogram.",
+      "value": "",
+      "required": true
+    },
+    "LOGGER_ID": {
+      "description": "Chat ID of your log group where the bot sends important logs. Make sure the bot is admin in that group.",
+      "required": true,
+      "value": ""
+    },
+    "COOKIE_URL": {
+      "description": "Direct raw link (from Batbin or Pastebin) to your YouTube cookies.txt file for better download support.",
+      "required": true,
+      "value": ""
+    },
+    "QUEUE_LIMIT": {
+      "description": "Maximum number of tracks allowed in one chat queue, including the currently playing track.",
+      "required": false,
+      "value": "10"
+    },
+    "PLAYLIST_FETCH_LIMIT": {
+      "description": "Maximum number of tracks imported from one playlist request.",
+      "required": false,
+      "value": "10"
+    },
+    "YTPROXY_URL": {
+      "description": "(Optional) Primary xBit music API endpoint. Leave as default unless you use another compatible endpoint.",
+      "required": false,
+      "value": "https://tgapi.xbitcode.com"
+    },
+    "YT_API_KEY": {
+      "description": "(Optional) API key associated with your primary xBit music API endpoint.",
+      "required": false,
+      "value": ""
+    },
+    "WORKER_FALLBACK_API_URL": {
+      "description": "(Optional) YouTube fallback converter API endpoint.",
+      "required": false,
+      "value": "https://youtubenewapi.skybotsdeveloper.workers.dev"
+    },
+    "WORKER_FALLBACK_API_KEY": {
+      "description": "(Optional) API key for the YouTube fallback converter API.",
+      "required": false,
+      "value": "itsmesid"
+    },
+    "DEEP_API": {
+      "description": "(Optional) DeepAI API key for enabling AI-powered features. Get it from https://deepai.org/.",
+      "required": false,
+      "value": ""
+    },
+    "HEROKU_API_KEY": {
+      "description": "Your Heroku account API key, required if you want the bot to support auto-updates or dynamic deployments.",
+      "required": false,
+      "value": ""
+    },
+    "HEROKU_APP_NAME": {
+      "description": "The name of your Heroku app. Required if using HEROKU_API_KEY for deployments.",
+      "required": false,
+      "value": ""
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    },
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
+    }
+  ],
+  "stack": "container"
+}
