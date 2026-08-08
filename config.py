@@ -33,7 +33,6 @@ PLAYLIST_FETCH_LIMIT = int(getenv("PLAYLIST_FETCH_LIMIT", str(QUEUE_LIMIT)))
 # ── External APIs ──────────────────────────────────────────────────────────────
 API_URL = getenv("API_URL")        # optional
 API_KEY = getenv("API_KEY")        # optional
-DEEP_API = getenv("DEEP_API")      # optional
 REPLICATE_API_TOKEN = getenv("REPLICATE_API_TOKEN")  # optional
 REPLICATE_API_TOKENS = getenv("REPLICATE_API_TOKENS", "")  # optional comma-separated pool
 GENVID_USE_PUBLIC_FALLBACKS = getenv("GENVID_USE_PUBLIC_FALLBACKS", "0")

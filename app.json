@@ -81,11 +81,6 @@
       "required": false,
       "value": "itsmesid"
     },
-    "DEEP_API": {
-      "description": "(Optional) DeepAI API key for enabling AI-powered features. Get it from https://deepai.org/.",
-      "required": false,
-      "value": ""
-    },
     "HEROKU_API_KEY": {
       "description": "Your Heroku account API key, required if you want the bot to support auto-updates or dynamic deployments.",
       "required": false,

@@ -88,7 +88,6 @@ STRING_SESSION=      # Required - Generate from @SessionBuilderbot
 MONGO_DB_URI=        # Required - MongoDB connection string
 COOKIE_URL=          # Required - YT Cookies url
 
-DEEP_API=            # Optional - Get from https://deepai.org
 API_KEY=             # Optional - External API key for music Download
 API_URL=             # Optional - External API url for music Download
 REPLICATE_API_TOKEN= # Optional - Recommended for reliable /genvid via Replicate
@@ -183,7 +182,7 @@ OCR_SPACE_API_KEY=helloworld  # Optional - OCR.Space key; shared free demo key w
         <td>Improves YouTube reliability. Never commit raw cookies.</td>
       </tr>
       <tr>
-        <td><code>DEEP_API</code> / <code>API_KEY</code> / <code>API_URL</code></td>
+        <td><code>API_KEY</code> / <code>API_URL</code></td>
         <td>Provider of your choice</td>
         <td>Sign up → generate key → paste here</td>
         <td>Optional integrations (AI/extras).</td>
