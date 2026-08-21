@@ -25,6 +25,7 @@ from PLANETXROBOT.utils.database import (
     add_active_chat,
     add_active_video_chat,
     get_autoplay,
+    get_8d_enabled,
     get_lang,
     get_loop,
     get_vcnotify,
@@ -61,6 +62,7 @@ vc_join_targets = {}
 vc_join_call_map = {}
 vc_join_event_cache = {}
 vc_join_notice_cache = {}
+prepared_stream_sources = {}
 
 PLAYBACK_WATCHDOG_GRACE_SECONDS = 20
 PLAYBACK_WATCHDOG_RECHECK_SECONDS = 30
@@ -121,16 +123,51 @@ def validate_stream_path(path: str) -> str:
     return path
 
 
-def dynamic_media_stream(path: str, video: bool = False, ffmpeg_params: str = None) -> MediaStream:
+SPATIAL_DEPTH = 0.65
+SPATIAL_FREQUENCY_HZ = 0.035
+SPATIAL_HEADROOM = 0.82
+
+
+def _spatial_filter(start_position: float) -> str:
+    """Return the fixed, mono-safe 8D mid/side motion filter."""
+    offset = max(float(start_position or 0), 0.0)
+    phase = f"2*PI*{SPATIAL_FREQUENCY_HZ}*(t+{offset:.3f})"
+    motion = f"{SPATIAL_DEPTH}*sin({phase})"
+    mid = "0.5*(val(0)+val(1))"
+    side = "0.70710678*(val(0)-val(1))"
+    left = f"{SPATIAL_HEADROOM}*({mid}+{side}*sqrt((1+{motion})/2))"
+    right = f"{SPATIAL_HEADROOM}*({mid}-{side}*sqrt((1-{motion})/2))"
+    return (
+        "aformat=channel_layouts=stereo,"
+        f"aeval='{left}':'{right}':c=stereo,"
+        "alimiter=limit=0.97"
+    )
+
+
+async def dynamic_media_stream(
+    path: str,
+    chat_id: int = None,
+    video: bool = False,
+    ffmpeg_params: str = None,
+    start_position: float = 0,
+) -> MediaStream:
     path = validate_stream_path(path)
-    return MediaStream(
+    params = ffmpeg_params or ""
+    spatial_enabled = chat_id is not None and await get_8d_enabled(chat_id)
+    if spatial_enabled:
+        params = f'{params} ---mid -af "{_spatial_filter(start_position)}"'.strip()
+    stream = MediaStream(
         audio_path=path,
         media_path=path,
         audio_parameters=AudioQuality.MEDIUM if video else AudioQuality.STUDIO,
         video_parameters=VideoQuality.HD_720p if video else VideoQuality.SD_360p,
         video_flags=(MediaStream.Flags.AUTO_DETECT if video else MediaStream.Flags.IGNORE),
-        ffmpeg_parameters=ffmpeg_params,
+        ffmpeg_parameters=params or None,
     )
+    prepared_stream_sources[id(stream)] = (
+        chat_id, path, bool(video), float(start_position or 0), spatial_enabled
+    )
+    return stream
 
 
 def is_groupcall_invalid(err: Exception) -> bool:
@@ -193,6 +230,8 @@ class Call:
 
         self.active_calls: set[int] = set()
         self._stream_locks: dict[int, asyncio.Lock] = {}
+        self._active_sources: dict[int, tuple[str, bool, float]] = {}
+        self._active_spatial: dict[int, bool] = {}
 
 
     def _get_stream_lock(self, chat_id: int) -> asyncio.Lock:
@@ -481,10 +520,12 @@ class Call:
 
         seek_to = max(played, 0)
         duration = track.get("dur") or seconds_to_min(seconds)
-        stream = dynamic_media_stream(
+        stream = await dynamic_media_stream(
             path=source_path,
+            chat_id=chat_id,
             video=video,
             ffmpeg_params=f"-ss {seconds_to_min(seek_to)} -to {duration}",
+            start_position=seek_to,
         )
         await self._play_stream(client, chat_id, stream)
         if db.get(chat_id) and isinstance(db[chat_id][0], dict):
@@ -738,6 +779,11 @@ class Call:
             for attempt in range(2):
                 try:
                     await assistant.play(chat_id, stream)
+                    source = prepared_stream_sources.pop(id(stream), None)
+                    if source and source[0] == chat_id:
+                        _, path, video, start_position, spatial_enabled = source
+                        self._active_sources[chat_id] = (path, video, start_position)
+                        self._active_spatial[chat_id] = spatial_enabled
                     return
                 except OSError as err:
                     if err.errno != 24 or attempt == 1:
@@ -763,6 +809,7 @@ class Call:
                             chat_id,
                         )
                     await asyncio.sleep(1)
+            prepared_stream_sources.pop(id(stream), None)
 
 
     @capture_internal_err
@@ -774,6 +821,9 @@ class Call:
     @capture_internal_err
     async def resume_stream(self, chat_id: int) -> None:
         assistant = await group_assistant(self, chat_id)
+        if self._active_spatial.get(chat_id) != await get_8d_enabled(chat_id):
+            await self.restart_current_stream(chat_id)
+            return
         await assistant.resume(chat_id)
         self._schedule_playback_watchdog(assistant, chat_id)
 
@@ -790,6 +840,8 @@ class Call:
     @capture_internal_err
     async def stop_stream(self, chat_id: int) -> None:
         assistant = await group_assistant(self, chat_id)
+        self._active_sources.pop(chat_id, None)
+        self._active_spatial.pop(chat_id, None)
         await self.stop_vc_join_notifier(chat_id)
         await _clear_(chat_id)
         if chat_id not in self.active_calls:
@@ -805,6 +857,8 @@ class Call:
     @capture_internal_err
     async def force_stop_stream(self, chat_id: int) -> None:
         assistant = await group_assistant(self, chat_id)
+        self._active_sources.pop(chat_id, None)
+        self._active_spatial.pop(chat_id, None)
         await self.stop_vc_join_notifier(chat_id)
         try:
             check = db.get(chat_id)
@@ -830,7 +884,7 @@ class Call:
     @capture_internal_err
     async def skip_stream(self, chat_id: int, link: str, video: Union[bool, str] = None, image: Union[bool, str] = None) -> None:
         assistant = await group_assistant(self, chat_id)
-        stream = dynamic_media_stream(path=link, video=bool(video))
+        stream = await dynamic_media_stream(path=link, chat_id=chat_id, video=bool(video))
         await self._play_stream(assistant, chat_id, stream)
         self._schedule_playback_watchdog(assistant, chat_id)
 
@@ -845,7 +899,55 @@ class Call:
         assistant = await group_assistant(self, chat_id)
         ffmpeg_params = f"-ss {to_seek} -to {duration}"
         is_video = mode == "video"
-        stream = dynamic_media_stream(path=file_path, video=is_video, ffmpeg_params=ffmpeg_params)
+        stream = await dynamic_media_stream(
+            path=file_path,
+            chat_id=chat_id,
+            video=is_video,
+            ffmpeg_params=ffmpeg_params,
+            start_position=to_seek,
+        )
+        await self._play_stream(assistant, chat_id, stream)
+        self._schedule_playback_watchdog(assistant, chat_id, initial_delay=1)
+
+    @capture_internal_err
+    async def restart_current_stream(self, chat_id: int) -> None:
+        """Replace only the FFmpeg stream, retaining the current voice call."""
+        current = self._watchable_track(chat_id)
+        if not current:
+            raise AssistantErr("No seekable track is currently playing.")
+
+        track, _, played = current
+        source = self._active_sources.get(chat_id)
+        video = str(track.get("streamtype") or "audio") == "video"
+        if source:
+            path, source_video, _ = source
+            video = source_video
+        else:
+            queued = str(track.get("file") or "")
+            if queued.startswith("vid_"):
+                path, _, _ = await self._download_youtube_queue_source(
+                    str(track.get("vidid") or ""),
+                    str(track.get("title") or "Unknown Title"),
+                    _SilentMystic(),
+                    track.get("streamtype") or "audio",
+                    modes=("local", "stream"),
+                )
+            elif queued.startswith("index_") or queued == "index_url":
+                path = str(track.get("vidid") or "")
+            else:
+                path = queued
+        if not path:
+            raise AssistantErr("Unable to reuse the current stream source.")
+
+        assistant = await group_assistant(self, chat_id)
+        duration = track.get("dur") or seconds_to_min(track.get("seconds") or 0)
+        stream = await dynamic_media_stream(
+            path=path,
+            chat_id=chat_id,
+            video=video,
+            ffmpeg_params=f"-ss {seconds_to_min(played)} -to {duration}",
+            start_position=played,
+        )
         await self._play_stream(assistant, chat_id, stream)
         self._schedule_playback_watchdog(assistant, chat_id, initial_delay=1)
 
@@ -885,7 +987,13 @@ class Call:
         duration_min = seconds_to_min(dur)
         is_video = playing[0]["streamtype"] == "video"
         ffmpeg_params = f"-ss {played} -to {duration_min}"
-        stream = dynamic_media_stream(path=out, video=is_video, ffmpeg_params=ffmpeg_params)
+        stream = await dynamic_media_stream(
+            path=out,
+            chat_id=chat_id,
+            video=is_video,
+            ffmpeg_params=ffmpeg_params,
+            start_position=con_seconds,
+        )
 
         if chat_id in db and db[chat_id] and db[chat_id][0].get("file") == file_path:
             await self._play_stream(assistant, chat_id, stream)
@@ -928,7 +1036,7 @@ class Call:
         assistant = await group_assistant(self, chat_id)
         lang = await get_lang(chat_id)
         _ = get_string(lang)
-        stream = dynamic_media_stream(path=link, video=bool(video))
+        stream = await dynamic_media_stream(path=link, chat_id=chat_id, video=bool(video))
 
         try:
             await self._play_stream(assistant, chat_id, stream)
@@ -1038,6 +1146,8 @@ class Call:
         ):
             return False
 
+        self._active_sources.pop(chat_id, None)
+        self._active_spatial.pop(chat_id, None)
         await _clear_(chat_id)
         if chat_id in self.active_calls:
             try:
@@ -1214,7 +1324,7 @@ class Call:
                         return
                     continue
 
-                stream = dynamic_media_stream(path=link, video=video)
+                stream = await dynamic_media_stream(path=link, chat_id=chat_id, video=video)
                 try:
                     await self._play_stream(client, chat_id, stream)
                 except Exception:
@@ -1260,7 +1370,7 @@ class Call:
                         return
                     continue
 
-                stream = dynamic_media_stream(path=file_path, video=video)
+                stream = await dynamic_media_stream(path=file_path, chat_id=chat_id, video=video)
                 try:
                     await self._play_stream(client, chat_id, stream)
                 except:
@@ -1289,7 +1399,7 @@ class Call:
                         fallback_direct,
                         fallback_mode,
                     )
-                    stream = dynamic_media_stream(path=file_path, video=video)
+                    stream = await dynamic_media_stream(path=file_path, chat_id=chat_id, video=video)
                     try:
                         await self._play_stream(client, chat_id, stream)
                     except:
@@ -1324,7 +1434,7 @@ class Call:
                     ):
                         return
                     continue
-                stream = dynamic_media_stream(path=videoid, video=video)
+                stream = await dynamic_media_stream(path=videoid, chat_id=chat_id, video=video)
                 try:
                     await self._play_stream(client, chat_id, stream)
                 except:
@@ -1344,7 +1454,7 @@ class Call:
                 return
 
             else:
-                stream = dynamic_media_stream(path=queued, video=video)
+                stream = await dynamic_media_stream(path=queued, chat_id=chat_id, video=video)
                 try:
                     await self._play_stream(client, chat_id, stream)
                 except:

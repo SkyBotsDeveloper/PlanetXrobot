@@ -22,6 +22,7 @@ from PLANETXROBOT.core.call import JARVIS
 from PLANETXROBOT.misc import SUDOERS, db
 from PLANETXROBOT.utils.database import (
     get_active_chats,
+    get_8d_enabled,
     get_assistant,
     get_lang,
     get_upvote_count,
@@ -34,6 +35,7 @@ from PLANETXROBOT.utils.database import (
     mute_off,
     mute_on,
     set_loop,
+    set_8d_enabled,
 )
 from PLANETXROBOT.utils.decorators import ActualAdminCB, languageCB
 from PLANETXROBOT.utils.formatters import seconds_to_min
@@ -185,6 +187,31 @@ async def manage_callback(client, callback: CallbackQuery, _):
         await music_on(chat_id)
         await JARVIS.resume_stream(chat_id)
         await callback.message.reply_text(_["admin_4"].format(user_mention), reply_markup=close_markup(_))
+
+    elif command == "8D":
+        previous = await get_8d_enabled(chat_id)
+        enabled = not previous
+        await set_8d_enabled(chat_id, enabled)
+        if await is_music_playing(chat_id):
+            try:
+                await JARVIS.restart_current_stream(chat_id)
+            except Exception:
+                await set_8d_enabled(chat_id, previous)
+                try:
+                    await JARVIS.restart_current_stream(chat_id)
+                except Exception:
+                    return await callback.answer(
+                        "8D could not be applied and playback recovery failed.",
+                        show_alert=True,
+                    )
+                return await callback.answer(
+                    "8D could not be applied; the previous stream was restored.",
+                    show_alert=True,
+                )
+        await callback.answer(f"8D {'enabled' if enabled else 'disabled'}.")
+        await callback.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup(stream_markup(_, chat_id))
+        )
 
     elif command in ["Stop", "End"]:
         await callback.answer()
