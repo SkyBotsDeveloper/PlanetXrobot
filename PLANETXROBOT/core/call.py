@@ -127,9 +127,9 @@ def validate_stream_path(path: str) -> str:
 
 HRTF_ANGLES = ("000", "045", "090", "135", "180", "225", "270", "315")
 HRTF_SAMPLE_RATE = 48000
-HRTF_MOVEMENT_HZ = 0.0625
+HRTF_MOVEMENT_HZ = 1 / 12
 HRTF_WET_GAIN = 0.82
-HRTF_DRY_GAIN = 0.04
+HRTF_STEREO_SIDE_GAIN = 0.12
 HRTF_ASSET_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "hrir")
 )
@@ -177,10 +177,13 @@ def _spatial_filter(start_position: float, source_params: str = "") -> str:
     )
     split_labels = "".join(f"[s{index}]" for index in range(len(HRTF_ANGLES)))
     graph = [
-        f"[16:a]aformat=channel_layouts=stereo,asplit=9[dry]{split_labels}",
-        f"[dry]volume={HRTF_DRY_GAIN}[drybed]",
+        f"[16:a]aformat=channel_layouts=stereo,asplit=9[stereo]{split_labels}",
+        (
+            "[stereo]pan=stereo|FL=0.5*FL-0.5*FR|FR=0.5*FR-0.5*FL,"
+            f"volume={HRTF_STEREO_SIDE_GAIN}[sidebed]"
+        ),
     ]
-    mix_inputs = "[drybed]"
+    mix_inputs = "[sidebed]"
     for index in range(len(HRTF_ANGLES)):
         angle = f"{index}*PI/4"
         distance = (

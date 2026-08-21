@@ -1,6 +1,6 @@
 import unittest
 
-from PLANETXROBOT.core.call import normalize_stream_position
+from PLANETXROBOT.core.call import _spatial_filter, normalize_stream_position
 
 
 class StreamPositionNormalizationTests(unittest.TestCase):
@@ -10,6 +10,12 @@ class StreamPositionNormalizationTests(unittest.TestCase):
         self.assertEqual(normalize_stream_position(24), 24.0)
         self.assertEqual(normalize_stream_position("24.5"), 24.5)
         self.assertEqual(normalize_stream_position(None), 0.0)
+
+    def test_timestamp_phase_is_deterministic(self):
+        graph = _spatial_filter("00:24")
+        self.assertIn("t+24.000", graph)
+        self.assertIn("[sidebed]", graph)
+        self.assertNotIn("[drybed]", graph)
 
 
 if __name__ == "__main__":
