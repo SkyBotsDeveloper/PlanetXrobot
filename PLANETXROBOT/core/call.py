@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import time
 from datetime import datetime, timedelta
@@ -126,17 +127,45 @@ def validate_stream_path(path: str) -> str:
 
 HRTF_ANGLES = ("000", "045", "090", "135", "180", "225", "270", "315")
 HRTF_SAMPLE_RATE = 48000
-HRTF_MOVEMENT_HZ = 0.03125
+HRTF_MOVEMENT_HZ = 0.0625
 HRTF_WET_GAIN = 0.82
-HRTF_DRY_GAIN = 0.18
+HRTF_DRY_GAIN = 0.04
 HRTF_ASSET_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "hrir")
 )
 
 
+def normalize_stream_position(position) -> float:
+    """Convert stream offsets to a non-negative seconds value for HRTF phase."""
+    if position is None:
+        return 0.0
+    if isinstance(position, str):
+        value = position.strip()
+        if not value:
+            return 0.0
+        if ":" in value:
+            parts = value.split(":")
+            if not 1 < len(parts) <= 3 or not all(part.isdigit() for part in parts):
+                return 0.0
+            seconds = 0.0
+            for part in parts:
+                seconds = seconds * 60 + int(part)
+        else:
+            try:
+                seconds = float(value)
+            except ValueError:
+                return 0.0
+    else:
+        try:
+            seconds = float(position)
+        except (TypeError, ValueError):
+            return 0.0
+    return max(seconds, 0.0) if math.isfinite(seconds) else 0.0
+
+
 def _spatial_filter(start_position: float, source_params: str = "") -> str:
     """Build a deterministic KEMAR-HRIR circular spatializer graph."""
-    offset = max(float(start_position or 0), 0.0)
+    offset = normalize_stream_position(start_position)
     assets = [os.path.join(HRTF_ASSET_DIR, f"kemar_{angle}.wav") for angle in HRTF_ANGLES]
     missing = [path for path in assets if not os.path.isfile(path)]
     if missing:
@@ -189,10 +218,11 @@ async def dynamic_media_stream(
     start_position: float = 0,
 ) -> MediaStream:
     path = validate_stream_path(path)
+    normalized_start_position = normalize_stream_position(start_position)
     params = ffmpeg_params or ""
     spatial_enabled = chat_id is not None and await get_8d_enabled(chat_id)
     if spatial_enabled:
-        params = _spatial_filter(start_position, params)
+        params = _spatial_filter(normalized_start_position, params)
     stream = MediaStream(
         audio_path=path,
         media_path=path,
@@ -206,7 +236,7 @@ async def dynamic_media_stream(
         ffmpeg_parameters=params or None,
     )
     prepared_stream_sources[id(stream)] = (
-        chat_id, path, bool(video), float(start_position or 0), spatial_enabled
+        chat_id, path, bool(video), normalized_start_position, spatial_enabled
     )
     return stream
 
