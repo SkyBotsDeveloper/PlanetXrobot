@@ -16,6 +16,7 @@ from pyrogram.types import InlineKeyboardMarkup
 from pytgcalls import PyTgCalls
 from pytgcalls.exceptions import NoActiveGroupCall
 from pytgcalls.types import AudioQuality, ChatUpdate, MediaStream, StreamEnded, Update, VideoQuality
+from pytgcalls.types.raw import AudioParameters
 
 import config
 from strings import get_string
@@ -123,24 +124,63 @@ def validate_stream_path(path: str) -> str:
     return path
 
 
-SPATIAL_DEPTH = 0.65
-SPATIAL_FREQUENCY_HZ = 0.035
-SPATIAL_HEADROOM = 0.82
+HRTF_ANGLES = ("000", "045", "090", "135", "180", "225", "270", "315")
+HRTF_SAMPLE_RATE = 48000
+HRTF_MOVEMENT_HZ = 0.03125
+HRTF_WET_GAIN = 0.34
+HRTF_MID_GAIN = 0.96
+HRTF_ASSET_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "assets", "hrir")
+)
 
 
-def _spatial_filter(start_position: float) -> str:
-    """Return the fixed, mono-safe 8D mid/side motion filter."""
+def _spatial_filter(start_position: float, source_params: str = "") -> str:
+    """Build a deterministic KEMAR-HRIR circular spatializer graph."""
     offset = max(float(start_position or 0), 0.0)
-    phase = f"2*PI*{SPATIAL_FREQUENCY_HZ}*(t+{offset:.3f})"
-    motion = f"{SPATIAL_DEPTH}*sin({phase})"
-    mid = "0.5*(val(0)+val(1))"
-    side = "0.70710678*(val(0)-val(1))"
-    left = f"{SPATIAL_HEADROOM}*({mid}+{side}*sqrt((1+{motion})/2))"
-    right = f"{SPATIAL_HEADROOM}*({mid}-{side}*sqrt((1-{motion})/2))"
+    assets = [os.path.join(HRTF_ASSET_DIR, f"kemar_{angle}.wav") for angle in HRTF_ANGLES]
+    missing = [path for path in assets if not os.path.isfile(path)]
+    if missing:
+        raise AssistantErr("8D HRTF assets are missing from the deployment.")
+
+    start_inputs = " ".join(
+        f'-i "{path.replace(chr(92), "/")}" -i "{path.replace(chr(92), "/")}"'
+        for path in assets
+    )
+    split_labels = "".join(f"[s{index}]" for index in range(len(HRTF_ANGLES)))
+    graph = [
+        f"[16:a]aformat=channel_layouts=stereo,asplit=9[d0]{split_labels}",
+        (
+            "[d0]pan=stereo|FL=0.5*FL+0.5*FR|FR=0.5*FL+0.5*FR,"
+            f"volume={HRTF_MID_GAIN}[mid]"
+        ),
+    ]
+    mix_inputs = "[mid]"
+    for index in range(len(HRTF_ANGLES)):
+        angle = f"{index}*PI/4"
+        distance = (
+            f"abs(mod(2*PI*{HRTF_MOVEMENT_HZ}*(t+{offset:.3f})-"
+            f"{angle}+PI,2*PI)-PI)"
+        )
+        weight = f"{HRTF_WET_GAIN}*if(lt({distance},PI/4),cos(2*{distance}),0)"
+        hrir_left = index * 2
+        hrir_right = hrir_left + 1
+        graph.extend([
+            f"[s{index}]pan=stereo|FL=0.5*FL-0.5*FR|FR=0*FR[side{index}]",
+            (
+                f"[side{index}][{hrir_left}:a][{hrir_right}:a]"
+                "headphone=map=FL|FR:hrir=stereo:type=freq:size=1024"
+                f"[h{index}]"
+            ),
+            f"[h{index}]volume='{weight}':eval=frame[hw{index}]",
+        ])
+        mix_inputs += f"[hw{index}]"
+    graph.append(
+        f"{mix_inputs}amix=inputs=9:normalize=0,"
+        "alimiter=limit=0.98:attack=5:release=80:latency=0[out]"
+    )
     return (
-        "aformat=channel_layouts=stereo,"
-        f"aeval='{left}':'{right}':c=stereo,"
-        "alimiter=limit=0.97"
+        f'---start {start_inputs} {source_params.strip()} '
+        f'---mid -filter_complex "{";".join(graph)}" -map "[out]"'
     )
 
 
@@ -155,11 +195,15 @@ async def dynamic_media_stream(
     params = ffmpeg_params or ""
     spatial_enabled = chat_id is not None and await get_8d_enabled(chat_id)
     if spatial_enabled:
-        params = f'{params} ---mid -af "{_spatial_filter(start_position)}"'.strip()
+        params = _spatial_filter(start_position, params)
     stream = MediaStream(
         audio_path=path,
         media_path=path,
-        audio_parameters=AudioQuality.MEDIUM if video else AudioQuality.STUDIO,
+        audio_parameters=(
+            AudioParameters(HRTF_SAMPLE_RATE, 2)
+            if spatial_enabled
+            else AudioQuality.MEDIUM if video else AudioQuality.STUDIO
+        ),
         video_parameters=VideoQuality.HD_720p if video else VideoQuality.SD_360p,
         video_flags=(MediaStream.Flags.AUTO_DETECT if video else MediaStream.Flags.IGNORE),
         ffmpeg_parameters=params or None,
