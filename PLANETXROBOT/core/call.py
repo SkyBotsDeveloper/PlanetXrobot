@@ -176,7 +176,7 @@ def _spatial_filter(start_position: float, source_params: str = "") -> str:
         mix_inputs += f"[hw{index}]"
     graph.append(
         f"{mix_inputs}amix=inputs=9:normalize=0,"
-        "alimiter=limit=0.98:attack=5:release=80:latency=0[out]"
+        "alimiter=limit=0.98:attack=5:release=80[out]"
     )
     return (
         f'---start {start_inputs} {source_params.strip()} '
