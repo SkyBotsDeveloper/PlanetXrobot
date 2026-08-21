@@ -127,7 +127,7 @@ def validate_stream_path(path: str) -> str:
 
 HRTF_ANGLES = ("000", "045", "090", "135", "180", "225", "270", "315")
 HRTF_SAMPLE_RATE = 48000
-HRTF_MOVEMENT_HZ = 1 / 12
+HRTF_MOVEMENT_HZ = 1 / 8
 HRTF_WET_GAIN = 0.82
 HRTF_STEREO_SIDE_GAIN = 0.12
 HRTF_ASSET_DIR = os.path.abspath(
