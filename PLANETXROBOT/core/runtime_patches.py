@@ -7,12 +7,52 @@ from typing import Any, Dict, List, Optional, Set
 
 from ntgcalls import FFmpegError
 from pytgcalls import ffmpeg as pytgcalls_ffmpeg
+from pytgcalls.types.stream import media_stream as pytgcalls_media_stream
 from pytgcalls.types import Cache as PytgCallsCache
 
 
 _PATCHES_APPLIED = False
 _SUPPORTED_FLAGS: Dict[str, Set[str]] = {}
 _SUPPORTED_FLAGS_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _is_hrtf_ffmpeg_parameters(parameters: Optional[str]) -> bool:
+    """Return whether parameters contain PlanetX's multi-input HRTF graph."""
+    return bool(
+        parameters
+        and parameters.startswith("---start")
+        and "headphone=map=FL|FR:hrir=stereo" in parameters
+        and "-filter_complex" in parameters
+    )
+
+
+def patch_pytgcalls_hrtf_probe() -> None:
+    """Keep HRTF-only FFmpeg inputs out of PyTgCalls' FFprobe validation."""
+    original_check_stream = getattr(pytgcalls_ffmpeg, "check_stream", None)
+    if not callable(original_check_stream):
+        return
+    if getattr(original_check_stream, "_planetx_hrtf_probe_patch", False):
+        return
+
+    async def compatible_check_stream(
+        ffmpeg_parameters: Optional[str],
+        path: str,
+        stream_parameters: Any,
+        before_commands: Optional[List[str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        return await original_check_stream(
+            None if _is_hrtf_ffmpeg_parameters(ffmpeg_parameters) else ffmpeg_parameters,
+            path,
+            stream_parameters,
+            before_commands,
+            headers,
+        )
+
+    compatible_check_stream._planetx_hrtf_probe_patch = True
+    pytgcalls_ffmpeg.check_stream = compatible_check_stream
+    # MediaStream imports check_stream directly, so update that bound reference too.
+    pytgcalls_media_stream.check_stream = compatible_check_stream
 
 
 async def _get_supported_flags(executable: str) -> Set[str]:
@@ -111,4 +151,5 @@ def apply_runtime_patches() -> None:
 
     pytgcalls_ffmpeg.cleanup_commands = cached_cleanup_commands
     patch_pytgcalls_cache_put()
+    patch_pytgcalls_hrtf_probe()
     _PATCHES_APPLIED = True
