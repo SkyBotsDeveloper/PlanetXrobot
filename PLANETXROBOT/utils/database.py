@@ -26,6 +26,7 @@ skipdb = mongodb.skipmode
 sudoersdb = mongodb.sudoers
 usersdb = mongodb.tgusersdb
 vcnotifydb = mongodb.vcnotify
+eightddb = mongodb.eightd
 
 
 active = []
@@ -46,6 +47,7 @@ playtype = {}
 skipmode = {}
 mute = {}
 vcnotify = {}
+eightd = {}
 
 ASSISTANT_WAIT_TIMEOUT = 30
 ASSISTANT_WAIT_INTERVAL = 0.5
@@ -242,6 +244,27 @@ async def set_autoplay(chat_id: int, mode: bool):
     autoplay[chat_id] = enabled
     await autoplaydb.update_one(
         {"chat_id": chat_id}, {"$set": {"mode": enabled}}, upsert=True
+    )
+
+
+async def get_8d_enabled(chat_id: int) -> bool:
+    enabled = eightd.get(chat_id)
+    if enabled is None:
+        data = await eightddb.find_one({"chat_id": chat_id})
+        enabled = bool((data or {}).get("enabled", False))
+        eightd[chat_id] = enabled
+    return bool(enabled)
+
+
+def is_8d_enabled_cached(chat_id: int) -> bool:
+    return bool(eightd.get(chat_id, False))
+
+
+async def set_8d_enabled(chat_id: int, enabled: bool) -> None:
+    enabled = bool(enabled)
+    eightd[chat_id] = enabled
+    await eightddb.update_one(
+        {"chat_id": chat_id}, {"$set": {"enabled": enabled}}, upsert=True
     )
 
 

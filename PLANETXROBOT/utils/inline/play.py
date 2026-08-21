@@ -1,6 +1,7 @@
 import time
 from pyrogram.types import InlineKeyboardButton
 from PLANETXROBOT.button_styles import danger_button, primary_button, success_button
+from PLANETXROBOT.utils.database import is_8d_enabled_cached
 from PLANETXROBOT.utils.formatters import time_to_seconds
 
 LAST_UPDATE_TIME = {}
@@ -48,13 +49,14 @@ def generate_progress_bar(played_sec, duration_sec):
 
 
 def control_buttons(_, chat_id):
+    eight_d_label = "🎧 8D ON" if is_8d_enabled_cached(chat_id) else "🎧 8D OFF"
     return [[
         success_button(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
         primary_button(text="II", callback_data=f"ADMIN Pause|{chat_id}"),
         InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
         primary_button(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
         danger_button(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
-    ]]
+    ], [primary_button(text=eight_d_label, callback_data=f"ADMIN 8D|{chat_id}")]]
 
 
 def stream_markup_timer(_, chat_id, played, dur):
