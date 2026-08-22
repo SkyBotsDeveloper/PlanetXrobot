@@ -16,7 +16,7 @@
 #define BLOCK_SIZE 1024
 #define ORBIT_SECONDS 8.0
 #define PI 3.14159265358979323846
-#define SIDE_PHASE(value) atan2(1.6 * sin(value), cos(value))
+#define SIDE_PHASE(value) atan2(2.4 * sin(value), cos(value))
 
 static float clamp_output(float value) {
     return value > 0.98f ? 0.98f : (value < -0.98f ? -0.98f : value);
