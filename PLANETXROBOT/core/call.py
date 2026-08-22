@@ -1,6 +1,7 @@
 import asyncio
 import math
 import os
+import shlex
 import time
 from datetime import datetime, timedelta
 from typing import Union
@@ -133,6 +134,26 @@ HRTF_STEREO_SIDE_GAIN = 0.12
 HRTF_ASSET_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "hrir")
 )
+STEAM_AUDIO_BRIDGE = os.getenv(
+    "PLANETX_STEAM_AUDIO_BRIDGE", "/usr/local/bin/planetx-steam-audio-bridge"
+)
+
+
+class SteamAudioMediaStream(MediaStream):
+    """Attach the persistent Steam Audio PCM bridge after PyTgCalls builds FFmpeg."""
+
+    def __init__(self, *args, start_position: float = 0, **kwargs):
+        self._steam_audio_start_position = normalize_stream_position(start_position)
+        super().__init__(*args, **kwargs)
+
+    async def check_stream(self):
+        await super().check_stream()
+        if self.microphone is not None and self.microphone.path:
+            position = f"{self._steam_audio_start_position:.6f}"
+            ffmpeg_command = shlex.split(self.microphone.path)
+            self.microphone.path = shlex.join(
+                [STEAM_AUDIO_BRIDGE, "--ffmpeg", position, "--", *ffmpeg_command]
+            )
 
 
 def normalize_stream_position(position) -> float:
@@ -225,8 +246,10 @@ async def dynamic_media_stream(
     params = ffmpeg_params or ""
     spatial_enabled = chat_id is not None and await get_8d_enabled(chat_id)
     if spatial_enabled:
-        params = _spatial_filter(normalized_start_position, params)
-    stream = MediaStream(
+        if not (os.path.isfile(STEAM_AUDIO_BRIDGE) and os.access(STEAM_AUDIO_BRIDGE, os.X_OK)):
+            raise AssistantErr("Steam Audio bridge is missing from this deployment.")
+    stream_type = SteamAudioMediaStream if spatial_enabled else MediaStream
+    stream = stream_type(
         audio_path=path,
         media_path=path,
         audio_parameters=(
@@ -237,6 +260,7 @@ async def dynamic_media_stream(
         video_parameters=VideoQuality.HD_720p if video else VideoQuality.SD_360p,
         video_flags=(MediaStream.Flags.AUTO_DETECT if video else MediaStream.Flags.IGNORE),
         ffmpeg_parameters=params or None,
+        **({"start_position": normalized_start_position} if spatial_enabled else {}),
     )
     prepared_stream_sources[id(stream)] = (
         chat_id, path, bool(video), normalized_start_position, spatial_enabled
