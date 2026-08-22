@@ -209,6 +209,13 @@ async def manage_callback(client, callback: CallbackQuery, _):
                     show_alert=True,
                 )
         await callback.answer(f"8D {'enabled' if enabled else 'disabled'}.")
+        if enabled:
+            await _safe_reply_callback_message(
+                callback,
+                "🎧 8D Experience ON\n\n"
+                "For the best 8D experience, use headphones or earbuds.\n"
+                "⚠️ Don't use speakers — the binaural effect won't be properly perceived.",
+            )
         await callback.edit_message_reply_markup(
             reply_markup=InlineKeyboardMarkup(stream_markup(_, chat_id))
         )

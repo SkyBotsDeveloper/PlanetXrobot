@@ -248,12 +248,8 @@ async def set_autoplay(chat_id: int, mode: bool):
 
 
 async def get_8d_enabled(chat_id: int) -> bool:
-    enabled = eightd.get(chat_id)
-    if enabled is None:
-        data = await eightddb.find_one({"chat_id": chat_id})
-        enabled = bool((data or {}).get("enabled", False))
-        eightd[chat_id] = enabled
-    return bool(enabled)
+    """8D is an opt-in setting for the current player session only."""
+    return bool(eightd.get(chat_id, False))
 
 
 def is_8d_enabled_cached(chat_id: int) -> bool:

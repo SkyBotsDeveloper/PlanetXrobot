@@ -39,6 +39,7 @@ from PLANETXROBOT.utils.database import (
     remove_active_chat,
     remove_active_video_chat,
     set_loop,
+    set_8d_enabled,
     set_vcnotify,
 )
 from PLANETXROBOT.utils.exceptions import AssistantErr
@@ -301,6 +302,7 @@ async def _clear_(chat_id: int) -> None:
     await remove_active_video_chat(chat_id)
     await remove_active_chat(chat_id)
     await set_loop(chat_id, 0)
+    await set_8d_enabled(chat_id, False)
 
 class Call:
     def __init__(self):
