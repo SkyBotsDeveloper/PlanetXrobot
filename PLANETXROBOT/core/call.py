@@ -151,8 +151,11 @@ class SteamAudioMediaStream(MediaStream):
         if self.microphone is not None and self.microphone.path:
             position = f"{self._steam_audio_start_position:.6f}"
             ffmpeg_command = shlex.split(self.microphone.path)
+            # ntgcalls' Boost.Process shell parser emits an empty executable for
+            # an absolute first token. The deployed bot PATH includes /usr/local/bin.
+            bridge_command = os.path.basename(STEAM_AUDIO_BRIDGE)
             self.microphone.path = shlex.join(
-                [STEAM_AUDIO_BRIDGE, "--ffmpeg", position, "--", *ffmpeg_command]
+                [bridge_command, "--ffmpeg", position, "--", *ffmpeg_command]
             )
 
 
