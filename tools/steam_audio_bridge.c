@@ -16,6 +16,7 @@
 #define BLOCK_SIZE 1024
 #define ORBIT_SECONDS 8.0
 #define PI 3.14159265358979323846
+#define SIDE_PHASE(value) atan2(1.6 * sin(value), cos(value))
 
 static float clamp_output(float value) {
     return value > 0.98f ? 0.98f : (value < -0.98f ? -0.98f : value);
@@ -72,7 +73,9 @@ int main(int argc, char **argv) {
         for (int i = 0; i < BLOCK_SIZE; ++i)
             program[i] = ((float) input_pcm[2 * i] + (float) input_pcm[2 * i + 1]) / 65536.0f;
 
-        const double phase = 2.0 * PI * (start_position + (double) frames / SAMPLE_RATE) / ORBIT_SECONDS;
+        const double phase = SIDE_PHASE(
+            2.0 * PI * (start_position + (double) frames / SAMPLE_RATE) / ORBIT_SECONDS
+        );
         IPLBinauralEffectParams params = {0};
         params.direction = (IPLVector3){(IPLfloat32) sin(phase), 0, (IPLfloat32) cos(phase)};
         params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
