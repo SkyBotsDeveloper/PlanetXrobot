@@ -135,8 +135,8 @@ HRTF_STEREO_SIDE_GAIN = 0.12
 HRTF_ASSET_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "hrir")
 )
-STEAM_AUDIO_BRIDGE = os.getenv(
-    "PLANETX_STEAM_AUDIO_BRIDGE", "/usr/local/bin/planetx-steam-audio-bridge"
+SPATIAL_AUDIO_BRIDGE = os.getenv(
+    "PLANETX_OBR_AUDIO_BRIDGE", "/usr/local/bin/planetx-obr-audio-bridge"
 )
 
 
@@ -154,7 +154,7 @@ class SteamAudioMediaStream(MediaStream):
             ffmpeg_command = shlex.split(self.microphone.path)
             # ntgcalls' Boost.Process shell parser emits an empty executable for
             # an absolute first token. The deployed bot PATH includes /usr/local/bin.
-            bridge_command = os.path.basename(STEAM_AUDIO_BRIDGE)
+            bridge_command = os.path.basename(SPATIAL_AUDIO_BRIDGE)
             self.microphone.path = shlex.join(
                 [bridge_command, "--ffmpeg", position, "--", *ffmpeg_command]
             )
@@ -250,8 +250,8 @@ async def dynamic_media_stream(
     params = ffmpeg_params or ""
     spatial_enabled = chat_id is not None and await get_8d_enabled(chat_id)
     if spatial_enabled:
-        if not (os.path.isfile(STEAM_AUDIO_BRIDGE) and os.access(STEAM_AUDIO_BRIDGE, os.X_OK)):
-            raise AssistantErr("Steam Audio bridge is missing from this deployment.")
+        if not (os.path.isfile(SPATIAL_AUDIO_BRIDGE) and os.access(SPATIAL_AUDIO_BRIDGE, os.X_OK)):
+            raise AssistantErr("Open Binaural Renderer bridge is missing from this deployment.")
     stream_type = SteamAudioMediaStream if spatial_enabled else MediaStream
     stream = stream_type(
         audio_path=path,
