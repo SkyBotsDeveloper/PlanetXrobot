@@ -17,6 +17,8 @@
 #define ORBIT_SECONDS 8.0
 #define PI 3.14159265358979323846
 #define SIDE_PHASE(value) atan2(2.4 * sin(value), cos(value))
+#define LATERAL_EMPHASIS_DB 3.0f
+#define EMPHASIS_HIGHPASS_ALPHA 0.884f
 
 static float clamp_output(float value) {
     return value > 0.98f ? 0.98f : (value < -0.98f ? -0.98f : value);
@@ -63,6 +65,8 @@ int main(int argc, char **argv) {
 
     int16_t input_pcm[BLOCK_SIZE * 2], output_pcm[BLOCK_SIZE * 2];
     float program[BLOCK_SIZE], left[BLOCK_SIZE], right[BLOCK_SIZE];
+    float previous_input[2] = {0.0f, 0.0f};
+    float previous_high[2] = {0.0f, 0.0f};
     float *input_channels[] = {program};
     float *output_channels[] = {left, right};
     IPLAudioBuffer input = {1, BLOCK_SIZE, input_channels};
@@ -83,7 +87,34 @@ int main(int argc, char **argv) {
         params.hrtf = hrtf;
         iplBinauralEffectApply(effect, &params, &input, &output);
 
+        // Preserve the HRTF-rendered full-band program while subtly reinforcing
+        // its localization-critical band. The equal-power gains are direction
+        // linked, and the side-only compensation prevents a loudness rise.
+        const float emphasis = LATERAL_EMPHASIS_DB * (float) sin(phase);
+        const float left_gain = powf(10.0f, -emphasis / 20.0f);
+        const float right_gain = powf(10.0f, emphasis / 20.0f);
+        const float gain_normalizer = sqrtf(
+            2.0f / (left_gain * left_gain + right_gain * right_gain)
+        );
+        const float loudness_compensation =
+            1.0f - 0.08f * (float) sin(phase) * (float) sin(phase);
         for (int i = 0; i < BLOCK_SIZE; ++i) {
+            float *ears[] = {&left[i], &right[i]};
+            const float gains[] = {
+                left_gain * gain_normalizer,
+                right_gain * gain_normalizer,
+            };
+            for (int ear = 0; ear < 2; ++ear) {
+                const float original = *ears[ear];
+                const float high = EMPHASIS_HIGHPASS_ALPHA * (
+                    previous_high[ear] + original - previous_input[ear]
+                );
+                previous_input[ear] = original;
+                previous_high[ear] = high;
+                *ears[ear] = (
+                    original + high * (gains[ear] - 1.0f)
+                ) * loudness_compensation;
+            }
             output_pcm[2 * i] = (int16_t) lrintf(clamp_output(left[i]) * 32767.0f);
             output_pcm[2 * i + 1] = (int16_t) lrintf(clamp_output(right[i]) * 32767.0f);
         }
