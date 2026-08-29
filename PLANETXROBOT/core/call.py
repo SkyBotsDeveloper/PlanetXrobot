@@ -68,6 +68,15 @@ vc_join_event_cache = {}
 vc_join_notice_cache = {}
 prepared_stream_sources = {}
 
+
+def _audio_diag(message: str, *args) -> None:
+    if os.getenv("PLANETX_AUDIO_DIAGNOSTICS") == "1":
+        try:
+            LOGGER(__name__).info("AUDIO_DIAG " + message, *args)
+        except Exception:
+            # Diagnostics must never interrupt audio startup or playback.
+            pass
+
 PLAYBACK_WATCHDOG_GRACE_SECONDS = 20
 PLAYBACK_WATCHDOG_RECHECK_SECONDS = 30
 PLAYBACK_EARLY_END_GRACE_SECONDS = 25
@@ -157,6 +166,10 @@ class SteamAudioMediaStream(MediaStream):
             bridge_command = os.path.basename(SPATIAL_AUDIO_BRIDGE)
             self.microphone.path = shlex.join(
                 [bridge_command, "--ffmpeg", position, "--", *ffmpeg_command]
+            )
+            _audio_diag(
+                "obr_stream sample_rate=%s channels=%s format=s16le command=%s",
+                HRTF_SAMPLE_RATE, 2, self.microphone.path,
             )
 
 
@@ -265,6 +278,10 @@ async def dynamic_media_stream(
         video_flags=(MediaStream.Flags.AUTO_DETECT if video else MediaStream.Flags.IGNORE),
         ffmpeg_parameters=params or None,
         **({"start_position": normalized_start_position} if spatial_enabled else {}),
+    )
+    _audio_diag(
+        "stream_construct type=%s source=%s sample_rate=%s channels=%s format=s16le",
+        stream_type.__name__, path, HRTF_SAMPLE_RATE if spatial_enabled else "AudioQuality", 2 if spatial_enabled else "NOT_EXPOSED",
     )
     prepared_stream_sources[id(stream)] = (
         chat_id, path, bool(video), normalized_start_position, spatial_enabled

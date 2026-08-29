@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import re
 import subprocess
+import os
 from json import JSONDecodeError
 from typing import Any, Dict, List, Optional, Set
 
@@ -14,6 +15,16 @@ from pytgcalls.types import Cache as PytgCallsCache
 _PATCHES_APPLIED = False
 _SUPPORTED_FLAGS: Dict[str, Set[str]] = {}
 _SUPPORTED_FLAGS_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _audio_diag(message: str, *args) -> None:
+    if os.getenv("PLANETX_AUDIO_DIAGNOSTICS") == "1":
+        try:
+            import logging
+            logging.getLogger("PLANETXROBOT.audio").info("AUDIO_DIAG " + message, *args)
+        except Exception:
+            # Diagnostics must never interrupt stream validation.
+            pass
 
 
 def _is_hrtf_ffmpeg_parameters(parameters: Optional[str]) -> bool:
@@ -41,6 +52,10 @@ def patch_pytgcalls_hrtf_probe() -> None:
         before_commands: Optional[List[str]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> None:
+        _audio_diag(
+            "ffprobe_input sample_rate=NOT_EXPOSED channels=NOT_EXPOSED format=NOT_EXPOSED parameters=%s",
+            "HRTF_GRAPH" if _is_hrtf_ffmpeg_parameters(ffmpeg_parameters) else (ffmpeg_parameters or "NONE"),
+        )
         return await original_check_stream(
             None if _is_hrtf_ffmpeg_parameters(ffmpeg_parameters) else ffmpeg_parameters,
             path,
