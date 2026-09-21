@@ -3,7 +3,7 @@ aiohttp
 bs4
 edge-tts
 gitpython
-gradio_client==2.6.1
+gradio_client==2.7.1
 gpytranslate
 gtts
 heroku3
