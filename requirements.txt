@@ -30,7 +30,7 @@ requests
 speedtest-cli
 spotipy
 tgcrypto
-torch>=2.14.0
+torch>=2.14.1
 transformers>=5.17.0
 torch>=2.2.0
 transformers>=5.15.1
