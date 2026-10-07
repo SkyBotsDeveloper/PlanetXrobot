@@ -15,7 +15,7 @@ numpy==2.5.3
 opencv-python
 pillow==12.3.0
 psutil
-ntgcalls==2.2.5
+ntgcalls==3.0.1
 py-tgcalls==2.3.3
 pycryptodome
 pydub
