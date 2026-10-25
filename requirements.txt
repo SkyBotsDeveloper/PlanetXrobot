@@ -35,4 +35,4 @@ transformers>=5.17.0
 torch>=2.2.0
 transformers>=5.15.1
 unidecode
-yt-dlp==2026.8.19
+yt-dlp==2026.10.21
