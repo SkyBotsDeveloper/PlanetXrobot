@@ -31,8 +31,8 @@ speedtest-cli
 spotipy
 tgcrypto
 torch>=2.14.0
-transformers>=5.17.0
+transformers>=5.22.0
 torch>=2.2.0
-transformers>=5.15.1
+transformers>=5.22.0
 unidecode
 yt-dlp==2026.8.19
